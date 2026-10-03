@@ -1,0 +1,38 @@
+name: probe-cotahist
+# Temporário: investiga o excesso de papéis com CODBDI 02 em 2020-2022.
+on:
+  push:
+    branches: [ccr-c01e6dec-u8z1ix]
+    paths: [".github/workflows/probe-cotahist.yml"]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - shell: python
+        run: |
+          import io, zipfile, requests
+          from collections import Counter
+          for y in (2021, 2024):
+              r = requests.get(f"https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A{y}.ZIP", timeout=300)
+              z = zipfile.ZipFile(io.BytesIO(r.content))
+              rows = []
+              with z.open(z.namelist()[0]) as f:
+                  for raw in f:
+                      l = raw.decode("latin-1")
+                      if l[:2] == "01" and l[10:12] == "02" and l[24:27] == "010":
+                          rows.append(l)
+              tick = {l[12:24].strip() for l in rows}
+              print(y, "linhas", len(rows), "papeis", len(tick))
+              print(" sufixo:", Counter(t[4:] for t in tick).most_common(15))
+              print(" especi:", Counter(" ".join(l[39:49].split()) for l in rows).most_common(25))
+              print(" isin[6:9]:", Counter(l[236:239] for l in rows).most_common(15))
+              odd = sorted(t for t in tick if t[4:] not in ("3", "4", "5", "6", "11"))[:40]
+              print(" exemplos fora de 3/4/5/6/11:", odd)
+              ex = [l for l in rows if l[12:24].strip() in odd[:5]][:5]
+              for l in ex:
+                  print("  |", l.rstrip())
