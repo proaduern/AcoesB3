@@ -1,0 +1,85 @@
+name: phase2-trial
+# TEMPORÁRIO (remover quando a fase 2 estiver validada, como o da carga da fase 1).
+# Dispara a cada push na branch de desenvolvimento da fase 2.
+#
+# Job "trial": carga completa num Postgres descartável (cad, FCA, DFP, COTAHIST), compute,
+#   relatório de medição e sonda do FRE. Nada toca o Neon.
+# Job "neon": mesma execução no Neon (recarga das DFP + compute + relatório). Só roda se o
+#   trial passar E a mensagem do commit tiver "[neon]". Assim o Neon só é tocado depois que
+#   o que aparecer no trial estiver corrigido.
+on:
+  push:
+    branches: ["claude/fase-2-indicadores-filtro-qy5py2"]
+    paths:
+      - ".github/workflows/phase2-trial.yml"
+      - "pipeline/**"
+      - "scripts/probe_phase2.py"
+      - "scripts/trial_report.py"
+jobs:
+  trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: acoes
+          POSTGRES_PASSWORD: acoes
+          POSTGRES_DB: acoes_trial
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acoes" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEON_DATABASE_URL: postgresql://acoes:acoes@localhost:5432/acoes_trial
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e pipeline
+      - name: Sonda (FRE e descrição das contas)
+        continue-on-error: true
+        run: python scripts/probe_phase2.py
+      - name: Carga - cadastro e FCA
+        run: |
+          time acoesb3 cad
+          time acoesb3 cvm --doc FCA
+      - name: Carga - DFP
+        run: time acoesb3 cvm --doc DFP
+      - name: Carga - COTAHIST
+        run: time acoesb3 cotahist
+      - name: Compute
+        run: acoesb3 compute
+      - name: Relatório
+        run: python scripts/trial_report.py
+      - name: Pendências de revisão
+        run: acoesb3 review list | head -150
+      - run: acoesb3 size
+
+  neon:
+    needs: trial
+    if: ${{ contains(github.event.head_commit.message, '[neon]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: neon-writer
+      cancel-in-progress: false
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e pipeline
+      - name: Verifica segredo
+        run: test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
+      - name: Recarrega DFP (contas de DVA de banco e seguradora)
+        run: time acoesb3 cvm --doc DFP --force
+      - name: Compute
+        run: time acoesb3 compute
+      - name: Relatório
+        run: python scripts/trial_report.py
+      - name: Pendências de revisão
+        run: acoesb3 review list | head -150
+      - run: acoesb3 size
