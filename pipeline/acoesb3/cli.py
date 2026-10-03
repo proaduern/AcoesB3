@@ -5,6 +5,8 @@ Exemplos:
     acoesb3 cvm --doc DFP --from-year 2010 --to-year 2025
     acoesb3 cotahist --from-year 2010 --to-year 2025
     acoesb3 daily
+    acoesb3 compute
+    acoesb3 review list
 """
 
 from __future__ import annotations
@@ -14,10 +16,11 @@ import json
 import logging
 import sys
 from datetime import date, timedelta
+from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
-from . import load
+from . import compute, load, review
 from .db import connect, get_config, migrate
 
 log = logging.getLogger("acoesb3")
@@ -123,6 +126,58 @@ def cmd_daily(conn, a) -> None:
         cmd_size(conn, a)
 
 
+COMPUTE_STEPS = ("annual", "outliers", "events", "screens")
+
+
+def cmd_compute(conn, a) -> None:
+    """Fase 2: fatos anuais -> outliers -> eventos societários -> retratos do filtro.
+
+    As etapas dependem umas das outras; se uma falha, as seguintes não rodam.
+    """
+    steps = a.step or list(COMPUTE_STEPS)
+    cfg = compute.load_config(conn)
+    fns = {
+        "annual": lambda: compute.build_annual(conn),
+        "outliers": lambda: compute.build_outliers(conn, cfg),
+        "events": lambda: compute.detect_events(conn, cfg),
+        "screens": lambda: compute.build_screens(conn, cfg),
+    }
+    for step in COMPUTE_STEPS:
+        if step in steps:
+            _run(conn, f"compute_{step}", fns[step])
+
+
+def cmd_review(conn, a) -> None:
+    r = a.review_cmd
+    if r == "list":
+        p = review.pending(conn)
+        print("Proventos suspeitos (sem decisão ficam FORA do histórico):")
+        for cvm, name, ref, total, med, ratio, dec in p["outliers"]:
+            print(
+                f"  {cvm:>6} {name[:32]:32} {ref} total={total:,.0f} mediana={med:,.0f}"
+                f" x{ratio:.1f} -> {dec or 'pendente'}"
+            )
+        print("Eventos societários detectados (suspected só vale depois de confirmar):")
+        for eid, tk, d, f, ratio, dis, st in p["events"]:
+            print(f"  id={eid:<6} {tk:8} {d} fator={f} razão={ratio} DISMES mudou={dis} -> {st}")
+    elif r == "outlier":
+        review.decide_outlier(conn, a.cvm, a.date, a.decision, a.note)
+    elif r == "event":
+        review.decide_event(conn, a.id, a.decision)
+    elif r == "event-add":
+        review.add_event(conn, a.ticker, a.date, Decimal(a.factor), a.note)
+    elif r == "dividend":
+        review.set_dividends(
+            conn, a.cvm, a.date, Decimal(a.jcp), Decimal(a.dividends), a.source, a.note
+        )
+    elif r == "dividend-clear":
+        review.clear_dividends(conn, a.cvm, a.date)
+    elif r == "class":
+        review.set_class(conn, a.cvm, a.sector, a.plan, a.note)
+    elif r == "ticker":
+        review.set_ticker_root(conn, a.root, a.cvm, a.note)
+
+
 def cmd_size(conn, a) -> None:
     report = load.size_report(conn)
     mb = report["database_bytes"] / 1024 / 1024
@@ -146,6 +201,43 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument("--force", action="store_true", help="reprocessa mesmo sem mudança")
     sub.add_parser("daily")
     sub.add_parser("size")
+    cp = sub.add_parser("compute", help="indicadores, outliers, eventos e filtro (fase 2)")
+    cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
+    rv = sub.add_parser("review", help="revisão manual (outliers, eventos, correções)")
+    rs = rv.add_subparsers(dest="review_cmd", required=True)
+    rs.add_parser("list")
+    x = rs.add_parser("outlier")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--date", type=date.fromisoformat, required=True, help="data-base da DFP")
+    x.add_argument("--decision", choices=["include", "exclude", "reset"], required=True)
+    x.add_argument("--note")
+    x = rs.add_parser("event")
+    x.add_argument("--id", type=int, required=True)
+    x.add_argument("--decision", choices=["confirm", "reject", "reset"], required=True)
+    x = rs.add_parser("event-add")
+    x.add_argument("--ticker", required=True)
+    x.add_argument("--date", type=date.fromisoformat, required=True)
+    x.add_argument("--factor", required=True, help="ações novas / antigas (2 = desdobra 1:2)")
+    x.add_argument("--note")
+    x = rs.add_parser("dividend")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--date", type=date.fromisoformat, required=True, help="data-base da DFP")
+    x.add_argument("--jcp", required=True, help="R$ brutos")
+    x.add_argument("--dividends", required=True, help="R$ brutos")
+    x.add_argument("--source", default="manual")
+    x.add_argument("--note")
+    x = rs.add_parser("dividend-clear")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--date", type=date.fromisoformat, required=True)
+    x = rs.add_parser("class")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--sector")
+    x.add_argument("--plan", choices=["comum", "banco", "seguradora"])
+    x.add_argument("--note")
+    x = rs.add_parser("ticker")
+    x.add_argument("--root", required=True)
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--note")
     a = p.parse_args(argv)
 
     with connect() as conn:
@@ -162,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
             cmd_daily(conn, a)
         elif a.cmd == "size":
             cmd_size(conn, a)
+        elif a.cmd == "compute":
+            cmd_compute(conn, a)
+        elif a.cmd == "review":
+            cmd_review(conn, a)
     return 0
 
 

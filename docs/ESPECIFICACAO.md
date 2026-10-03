@@ -55,6 +55,27 @@ Duas séries de preço:
 
 **Limitação de histórico**: os dados estruturados da CVM começam por volta de 2010.
 
+### 4.1 Definições operacionais do filtro (fase 2, 03/10/2026)
+
+Decididas pelo usuário:
+- **Proventos**: total anual declarado na DVA da DFP (JCP + dividendos, bruto, do controlador). "Pago" = declarado no exercício; a CVM não traz data de pagamento. Pode haver substituição por exercício, por outra fonte ou à mão (`dividend_override`).
+- **Menos de 10 anos de DFP**: não reprova; fica como **histórico insuficiente**, separado de quem reprovou num critério.
+- **Setor**: setor declarado à CVM, com reclassificação manual por empresa (`company_class_override`). Segmentos excluídos: `screen.excluded_sectors` (hoje vazio: o usuário ainda não informou a lista).
+- **Retratos**: o cálculo recebe uma data-base e só usa DFP já entregues nela (`filing_available`). Grava o retrato de hoje e um por fim de ano a partir de `screen.snapshot_first_year` (2020: antes disso a janela de 10 anos não fecha, pois a DFP estruturada começa em 2010).
+- **Queda do dividendo por ação**: por ação de verdade, com ajuste por desdobramento/grupamento/bonificação detectados no COTAHIST (confirmação manual dos duvidosos).
+- **DY**: dividendo total do ano ÷ valor de mercado (fechamento do último pregão do exercício × ações da CVM). Ações da CVM só existem de 2020 em diante; antes disso o DY é **indisponível** e o retrato fica "dados insuficientes".
+
+Adotadas por padrão (corrigir se discordar; todas configuráveis):
+- **Lucro e PL**: lucro atribuído aos controladores; PL dos controladores (consolidado menos não controladores). Plano de contas identificado pela conta de lucro dos controladores (comum `3.11.01`, banco `3.09.01`, seguradora `3.13.01`).
+- **ROE** = lucro ÷ média do PL do início e do fim do exercício. PL médio ≤ 0: indisponível.
+- **"Últimos N anos"**: os N exercícios que terminam no último exercício disponível na data-base. Falta um exercício no meio da janela: indisponível.
+- **Payout** = (JCP + dividendos) ÷ lucro do controlador (bruto); média de 5 anos, faixa inclusiva; anos de prejuízo e de outlier ficam fora da média (mínimo de 3 anos restantes, `outlier.min_valid_years`).
+- **Proventos em 10 de 10 anos**: total declarado > 0 em todos os anos. Ano de outlier excluído conta como pago.
+- **Queda do dividendo por ação**: DPS = payout × LPA da classe de referência (ON; sem ON, PN), levado à base de ações da data-base. Queda = DPS menor que o do ano anterior (tolerância `screen.dps_drop_tolerance`, padrão 0). Comparações com ano de prejuízo ou outlier são puladas; exige 6 comparações (`screen.dps_min_pairs`), senão indisponível.
+- **Outlier**: total anual > 2 × mediana dos 5 anos anteriores (mínimo de 3 anos com dado; mediana zero não conclui). Sem decisão do usuário, o ano fica fora das médias de DY e payout; decisão `include` o devolve. A revisão é por comando até a tela existir (fase 5).
+- **Liquidez**: janela de 3 meses até a data-base; volume = soma de todas as classes ÷ pregões da janela; presença = pregões com negócio em alguma classe ÷ pregões da janela. Entra como critério do filtro, com motivo visível.
+- **Status do retrato**: `approved`, `rejected` (algum critério falhou), `insufficient_history` (menos anos de DFP que a janela), `insufficient_data` (falta conta, ano no meio ou preço) ou `excluded` (setor fora do universo). Falha de um critério vence critério indisponível.
+
 ## 5. Preço teto
 
 | Método | Aplicação | Parâmetros | Exclusões |
@@ -135,6 +156,7 @@ Duas séries de preço:
 - ~~Limite atual de armazenamento do Neon grátis.~~ **Verificado (03/10/2026)**: 1 GB por projeto (até 20 GB somando 100 projetos), 100 CU-hora/projeto, 5 GB de tráfego de saída/projeto. Carga completa 2010–2026 medida: **320 MB** (32% do limite), crescimento ~20 MB/ano; ver `docs/fase1.md`.
 - ~~Atraso real entre a entrega à CVM e a disponibilidade nos Dados Abertos~~ **Verificado (03/10/2026)**: DFP/ITR/FCA são atualizados **semanalmente** (página oficial do conjunto de dados; arquivos regerados no domingo 27/09). Atraso de até ~7 dias corridos, mais que 1 dia útil. O cadastro de companhias é diário. **Detecção via RAD/ENET inviável**: desde 06/07/2026 a consulta externa mudou para `/ENETWeb/` e a listagem de documentos exige Google reCAPTCHA; automatizá-la exigiria contornar o CAPTCHA. **Decidido (03/10/2026)**: o usuário aceita o atraso semanal; não há detecção de entrega além dos Dados Abertos.
 - Os arquivos de demonstrações trazem só a versão mais recente de cada documento; o índice traz todas as versões com a data de entrega. Versões antigas só existem no banco se coletadas na época. **Decidido**: o backtest usa a data de entrega da versão guardada (seção 8).
+- **Fase 2, a verificar na carga real (não confirmado, o ambiente de desenvolvimento não alcança o Neon nem a CVM)**: (a) cobertura da DVA (empresas sem as contas de JCP/dividendos ficam indisponíveis, nunca zero) e se a DVA consolidada inclui dividendos de minoritários de controladas; (b) se `3.99.01.01`/`3.99.01.02` são sempre ON/PN (a descrição da conta não é guardada); (c) se o DISMES do COTAHIST muda em todo desdobramento (hoje só reforça a detecção); (d) base de data de `composicao_capital` (assumida: fim do exercício); (e) bonificações abaixo de ~15% não são detectadas e podem gerar queda falsa de dividendo por ação (use `review event-add`); (f) FRE (capital social) como fonte de ações antes de 2020, para o DY dos retratos anteriores a 2025.
 - Cobertura dos releases entregues à CVM para as empresas da lista.
 - Regras vigentes de tributação de dividendos (informativo; o sistema usa alíquotas configuráveis).
 - Disponibilidade e limites da brapi/Yahoo no plano grátis.
