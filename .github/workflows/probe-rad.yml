@@ -16,32 +16,18 @@ jobs:
       - shell: python
         run: |
           import re, requests
-          UA = {"User-Agent": "Mozilla/5.0 AcoesB3-probe"}
-          s = requests.Session(); s.headers.update(UA)
-          for ds in ("cia_aberta-doc-ipe",):
-              r = s.get(f"https://dados.cvm.gov.br/dataset/{ds}", timeout=60)
-              t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text))
-              for kw in ("Periodicidade", "atualizad"):
-                  for m in re.finditer(kw, t):
-                      print(f"[{ds}]", t[max(0, m.start()-120):m.start()+220])
+          s = requests.Session(); s.headers.update({"User-Agent": "Mozilla/5.0 AcoesB3-probe"})
           base = "https://www.rad.cvm.gov.br/ENET/"
           r = s.get(base + "frmConsultaExternaCVM.aspx", timeout=60)
-          print("GET consulta", r.status_code, len(r.text), r.headers.get("Content-Type"))
-          html = r.text
-          for m in re.finditer(r"ListarDocumentos|PageMethods|\.aspx/\w+", html):
-              print("  html:", html[max(0, m.start()-200):m.start()+300].replace("\n", " "))
-          scripts = re.findall(r'<script[^>]+src="([^"]+)"', html)
-          print("scripts:", scripts)
-          for src in scripts:
-              url = src if src.startswith("http") else base + src.lstrip("/")
-              try:
-                  js = s.get(url, timeout=60).text
-              except Exception as e:
-                  print("fail", url, e); continue
-              for m in re.finditer(r"ListarDocumentos", js):
-                  print(f"  [{src}]", js[max(0, m.start()-1500):m.start()+1500].replace("\n", " "))
-          # inline scripts
-          for m in re.finditer(r"<script[^>]*>(.*?)</script>", html, re.S):
-              body = m.group(1)
-              if "ListarDocumentos" in body or "dataDe" in body or "categoria" in body.lower():
-                  print("  inline:", body[:4000].replace("\n", " "))
+          print("=====HTML", r.status_code, r.url)
+          print(r.text)
+          print("=====END")
+          for src in re.findall(r'(?:src|href)="([^"]+\.js[^"]*)"', r.text):
+              if "ruxit" in src:
+                  continue
+              url = src if src.startswith("http") else requests.compat.urljoin(r.url, src)
+              js = s.get(url, timeout=60)
+              print("=====JS", url, js.status_code, len(js.text))
+              t = js.text
+              for m in re.finditer(r"ajax|url\s*:|\.aspx/|ListarDocumentos|POST", t):
+                  print("   ", t[max(0, m.start()-300):m.start()+600].replace("\n", " "))
