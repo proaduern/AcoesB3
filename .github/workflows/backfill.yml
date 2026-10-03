@@ -1,0 +1,57 @@
+name: backfill
+# Carga histórica sob demanda, em lotes por ano. Ordem recomendada:
+# cad -> FCA -> DFP -> ITR -> cotahist. Reexecutar é seguro (idempotente).
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "O que carregar"
+        required: true
+        type: choice
+        options: [cad, FCA, DFP, ITR, cotahist]
+      from_year:
+        description: "Ano inicial (vazio = parâmetro em app_config)"
+        required: false
+      to_year:
+        description: "Ano final (vazio = ano corrente)"
+        required: false
+      force:
+        description: "Reprocessar mesmo sem mudança no arquivo"
+        type: boolean
+        default: false
+concurrency:
+  group: neon-writer
+  cancel-in-progress: false
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: pipeline
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      SOURCE: ${{ inputs.source }}
+      FROM_YEAR: ${{ inputs.from_year }}
+      TO_YEAR: ${{ inputs.to_year }}
+      FORCE: ${{ inputs.force }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Verifica segredo
+        run: test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
+      - name: Carga
+        run: |
+          args=()
+          [ -n "$FROM_YEAR" ] && args+=(--from-year "$FROM_YEAR")
+          [ -n "$TO_YEAR" ] && args+=(--to-year "$TO_YEAR")
+          [ "$FORCE" = "true" ] && args+=(--force)
+          case "$SOURCE" in
+            cad) acoesb3 cad ;;
+            cotahist) acoesb3 cotahist "${args[@]}" ;;
+            *) acoesb3 cvm --doc "$SOURCE" "${args[@]}" ;;
+          esac
+      - run: acoesb3 size

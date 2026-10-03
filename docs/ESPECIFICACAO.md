@@ -103,7 +103,8 @@ Duas séries de preço:
 
 ## 9. Infraestrutura
 
-- **Banco**: Neon (Postgres, plano grátis). Guardar só as contas usadas nos cálculos.
+- **Banco**: Neon (Postgres, plano grátis: 1 GB por projeto, verificado em 03/10/2026). Guardar só as contas usadas nos cálculos: lista editável na tabela `cvm_account` (cobre os planos de contas de empresa comum, banco e seguradora).
+- **Demonstração usada**: consolidada; individual só quando a empresa não entrega consolidada.
 - **Processamento**: Python em lotes no GitHub Actions (coleta diária, cálculos, recálculo disparado pela tela ao mudar configuração, 2–5 min).
 - **Tela**: Next.js na Vercel. Lê resultados prontos do banco.
 - **Simulador**: recalcula uma ação na hora (TypeScript), com teste automático de paridade contra o Python.
@@ -131,8 +132,9 @@ Duas séries de preço:
 
 ## 12. A verificar na implementação (não assumir)
 
-- Limite atual de armazenamento do Neon grátis.
-- Atraso real entre a entrega à CVM e a disponibilidade nos Dados Abertos; se passar de 1 dia útil, usar o RAD/ENET para detectar a entrega.
+- ~~Limite atual de armazenamento do Neon grátis.~~ **Verificado (03/10/2026)**: 1 GB por projeto (até 20 GB somando 100 projetos), 100 CU-hora/projeto, 5 GB de tráfego de saída/projeto. Carga completa 2010–2026 medida: **320 MB** (32% do limite), crescimento ~20 MB/ano; ver `docs/fase1.md`.
+- ~~Atraso real entre a entrega à CVM e a disponibilidade nos Dados Abertos~~ **Verificado (03/10/2026)**: DFP/ITR/FCA são atualizados **semanalmente** (página oficial do conjunto de dados; arquivos regerados no domingo 27/09). Atraso de até ~7 dias corridos, mais que 1 dia útil. O cadastro de companhias é diário. **Pendente de decisão**: detecção da entrega via RAD/ENET (endpoint ainda não verificado).
+- Os arquivos de demonstrações trazem só a versão mais recente de cada documento; o índice traz todas as versões com a data de entrega. Versões antigas só existem no banco se coletadas na época. **Pendente de decisão**: no backtest, qual data usar para um documento reapresentado (ver `docs/fase1.md`).
 - Cobertura dos releases entregues à CVM para as empresas da lista.
 - Regras vigentes de tributação de dividendos (informativo; o sistema usa alíquotas configuráveis).
 - Disponibilidade e limites da brapi/Yahoo no plano grátis.
