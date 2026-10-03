@@ -1,9 +1,0 @@
-pyproject.toml
-acoesb3/__init__.py
-acoesb3/db.py
-acoesb3.egg-info/PKG-INFO
-acoesb3.egg-info/SOURCES.txt
-acoesb3.egg-info/dependency_links.txt
-acoesb3.egg-info/entry_points.txt
-acoesb3.egg-info/requires.txt
-acoesb3.egg-info/top_level.txt
