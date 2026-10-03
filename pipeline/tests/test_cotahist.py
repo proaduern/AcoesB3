@@ -60,8 +60,21 @@ def test_linha_curta_falha():
         parse_line("01" + "0" * 100)
 
 
+STOCKS = {"ACN", "UNT", "CDA"}
+
+
 def test_filtro_codbdi_e_mercado():
-    qs = list(select_quotes(lines("COTAHIST_A2010_sample.TXT"), {"02"}, {"010"}))
+    qs = list(select_quotes(lines("COTAHIST_A2010_sample.TXT"), {"02"}, {"010"}, STOCKS))
     tickers = {q.ticker for q in qs}
     assert {"PETR4", "WEGE3", "CBEE3"} <= tickers
     assert "ABCB4F" not in tickers  # fracionário (020 / BDI 96) fica fora
+
+
+def test_bdr_com_codbdi_02_fica_fora():
+    # Em 2021 a B3 marcou BDRs (ex.: A1AP34, ESPECI DRN) com CODBDI 02, igual às ações
+    ls = lines("COTAHIST_A2024_A2010_A1986_sample.txt")
+    bdr = next(parse_line(ln) for ln in ls if ln[12:24].strip() == "A1AP34")
+    assert bdr.codbdi == "02" and bdr.especi == "DRN"
+    tickers = {q.ticker for q in select_quotes(ls, {"02"}, {"010"}, STOCKS)}
+    assert "A1AP34" not in tickers
+    assert {"PETR4", "TAEE11", "EQMA3B"} <= tickers  # ação, unit (ISIN CDA) e ação 3B

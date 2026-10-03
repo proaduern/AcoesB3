@@ -35,5 +35,6 @@ INSERT INTO app_config (key, value, description) VALUES
  ('cotahist.first_year', '2010', 'Primeiro ano de cotações COTAHIST coletado'),
  ('cotahist.codbdi', '["02"]', 'Códigos BDI guardados (02 = lote padrão de ações)'),
  ('cotahist.market_types', '["010"]', 'Tipos de mercado guardados (010 = à vista)'),
+ ('cotahist.isin_types', '["ACN", "UNT", "CDA"]', 'Tipo de ativo no ISIN (posições 7-9): ACN = ação, UNT/CDA = unit. Exclui BDR, que em 2020-2022 veio com CODBDI 02'),
  ('cvm.statement_scope', '"con_else_ind"', 'Demonstração usada: consolidada; individual só se a empresa não entregar consolidada'),
  ('collect.daily_lookback_days', '10', 'Dias úteis para trás que a coleta diária de cotações reprocessa');

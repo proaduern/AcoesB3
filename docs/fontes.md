@@ -61,5 +61,9 @@ As linhas usadas nos testes (`pipeline/tests/fixtures/`) foram copiadas desses a
   com 1000 o preço é por lote de mil ações (2010: 7.015 registros; 2024: 539).
 - Conferência: PETR4 em 02/01/2024 — fechamento 37,78; preço médio 37,66 × 24.043.800 ações
   = volume 905.513.838,00 (bate com o campo VOLTOT).
-- Filtro do pipeline (configurável): `CODBDI = 02` (lote padrão) e `TPMERC = 010` (à vista).
+- Filtro do pipeline (configurável): `CODBDI = 02` (lote padrão), `TPMERC = 010` (à vista) e
+  tipo de ativo do ISIN (posições 7–9 do ISIN) em `ACN` (ação), `UNT`/`CDA` (unit).
   Em 2024: 85.739 registros com CODBDI 02, de 2,6 milhões no arquivo.
+- **Em 2020–2022 a B3 marcou BDRs com `CODBDI = 02`** (ESPECI `DRN`/`DR3`, ISIN tipo `BDR`,
+  ex.: `A1AP34`). Em 2021 eram 718 dos 1.309 papéis com CODBDI 02. Daí o filtro pelo ISIN.
+- `DT_REFER`/datas: AAAAMMDD. Arquivo de 1986 tem ISIN no formato antigo (sem `BR`).

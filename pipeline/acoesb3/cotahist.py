@@ -92,12 +92,21 @@ def iter_zip(content: bytes) -> Iterator[str]:
 
 
 def select_quotes(
-    lines: Iterable[str], codbdi: set[str], market_types: set[str]
+    lines: Iterable[str], codbdi: set[str], market_types: set[str], isin_types: set[str]
 ) -> Iterator[Quote]:
-    """Filtra cotações pelo código BDI e tipo de mercado configurados."""
+    """Filtra cotações pelo código BDI, tipo de mercado e tipo de ativo do ISIN configurados.
+
+    O tipo do ISIN (posições 7-9: 'ACN' ação, 'UNT'/'CDA' unit, 'BDR'...) é necessário porque
+    em 2020-2022 a B3 marcou BDRs com CODBDI 02, o mesmo das ações.
+    """
     for line in lines:
         # filtro barato antes de converter a linha inteira
-        if line[0:2] != "01" or line[10:12] not in codbdi or line[24:27] not in market_types:
+        if (
+            line[0:2] != "01"
+            or line[10:12] not in codbdi
+            or line[24:27] not in market_types
+            or line[236:239] not in isin_types
+        ):
             continue
         q = parse_line(line)
         if q is not None:

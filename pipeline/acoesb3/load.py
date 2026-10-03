@@ -291,7 +291,8 @@ def load_cotahist(conn: psycopg.Connection, url: str, force: bool = False) -> di
         return {"skipped": "sem mudança"}
     codbdi = set(get_config(conn, "cotahist.codbdi"))
     markets = set(get_config(conn, "cotahist.market_types"))
-    quotes = list(cotahist.select_quotes(cotahist.iter_zip(d.content), codbdi, markets))
+    isin_types = set(get_config(conn, "cotahist.isin_types"))
+    quotes = list(cotahist.select_quotes(cotahist.iter_zip(d.content), codbdi, markets, isin_types))
     if not quotes:
         return {"quotes": 0}
     sec_ids = _upsert_securities(conn, quotes)
