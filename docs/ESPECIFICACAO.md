@@ -117,7 +117,7 @@ Duas séries de preço:
 - Todo indicador exibe fonte, data-base e data de coleta.
 - Escala da CVM (`ESCALA_MOEDA`: unidade vs mil) tratada e testada explicitamente.
 - Dado ausente aparece como "indisponível", nunca como zero ou valor antigo sem aviso.
-- Pelo menos 3 testes comparam valores contra números de balanços publicados, conferidos manualmente pelo usuário.
+- Pelo menos 3 testes comparam valores contra números de balanços publicados, conferidos manualmente pelo usuário. **Feito (03/10/2026)**: lucro atribuído aos controladores em 2024 de WEG (R$ 6.042.593 mil), Itaú (R$ 41.085.000 mil) e BB Seguridade (R$ 8.703.353 mil), conferidos pelo usuário contra os balanços publicados (`pipeline/tests/test_cvm.py::test_lucro_controlador_por_plano_de_contas`).
 
 ## 11. Fases
 

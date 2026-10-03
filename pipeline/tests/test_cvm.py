@@ -71,6 +71,8 @@ def test_escala_prefixo_por_acao_nao_pega_conta_vizinha():
 
 
 def test_lucro_controlador_por_plano_de_contas():
+    # Valores conferidos pelo usuário contra os balanços publicados de 2024 (03/10/2026),
+    # conforme a seção 10 da especificação. Não alterar sem nova conferência.
     ls = lines("dfp_cia_aberta_DRE_con_2024.csv", "DRE")
     assert value(ls, 19348, "3.09.01").value == Decimal("41085000000")  # Itaú (banco)
     assert value(ls, 23159, "3.13.01").value == Decimal("8703353000")  # BB Seguridade

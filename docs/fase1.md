@@ -71,4 +71,3 @@ do GitHub Actions só valem lá). Recarga manual: Actions → `backfill` (també
 | Ticker ↔ empresa no passado | O FCA só traz ticker a partir de certo ano (em 2010 vem vazio). Ligar papéis antigos à empresa (via ISIN/prefixo) fica para a fase 2. |
 | Comparativo (`PENÚLTIMO`) dos documentos | Só o exercício do próprio documento é guardado; o comparativo é o mesmo dado reapresentado no documento seguinte. |
 | Contas do DFC de investimento/financiamento | Não são contas fixas da CVM (código e descrição mudam por empresa). O FCFE da fase 3 vai precisar de uma regra para elas. |
-| Os 3 testes contra balanços publicados conferidos pelo usuário (seção 10) | Os testes usam valores dos arquivos da CVM. A conferência contra o balanço publicado precisa ser feita pelo usuário (ver relatório). |
