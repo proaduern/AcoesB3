@@ -1,0 +1,32 @@
+name: pipeline-ci
+on:
+  push:
+    paths: ["pipeline/**", ".github/workflows/pipeline-ci.yml"]
+  pull_request:
+    paths: ["pipeline/**", ".github/workflows/pipeline-ci.yml"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: acoes
+          POSTGRES_PASSWORD: acoes
+          POSTGRES_DB: acoes_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acoes" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: pipeline
+    env:
+      TEST_DATABASE_URL: postgresql://acoes:acoes@localhost:5432/acoes_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check . && ruff format --check .
+      - run: pytest -q
