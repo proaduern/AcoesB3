@@ -160,6 +160,39 @@ def choose_scope(lines: Iterable[Line]) -> list[Line]:
     return [x for x in lines if x.consolidated or key(x) not in has_con]
 
 
+def dedupe(lines: Iterable[Line]) -> tuple[list[Line], int, list[tuple]]:
+    """Remove linhas repetidas.
+
+    Desde 2021 a CVM publica algumas linhas duplicadas byte a byte (ex.: CPX Distribuidora).
+    Duplicata idêntica: fica uma. Mesma chave com valores diferentes: nenhuma fica
+    (o dado passa a indisponível) e a chave é devolvida para registro.
+    Retorna (linhas, quantidade de duplicatas idênticas, chaves em conflito).
+    """
+    by_key: dict[tuple, Line] = {}
+    identical = 0
+    conflicts: set[tuple] = set()
+    for x in lines:
+        key = (
+            x.cvm_code,
+            x.reference_date,
+            x.version,
+            x.statement,
+            x.consolidated,
+            x.account_code,
+            x.period_start,
+            x.period_end,
+        )
+        prev = by_key.get(key)
+        if prev is None:
+            by_key[key] = x
+        elif prev == x:
+            identical += 1
+        else:
+            conflicts.add(key)
+    kept = [x for k, x in by_key.items() if k not in conflicts]
+    return kept, identical, sorted(conflicts, key=str)
+
+
 @dataclass(frozen=True)
 class ShareCount:
     cnpj: str

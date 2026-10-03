@@ -166,3 +166,15 @@ def test_cad_deduplica_e_mantem_canceladas():
     assert rows[5410].status == "ATIVO"
     raw_count = fixture_bytes("cad_cia_aberta.csv").decode("latin-1").count("\n") - 1
     assert len(rows) < raw_count  # havia CD_CVM duplicado
+
+
+def test_duplicata_identica_fica_uma_e_conflito_some():
+    a = _line(True)
+    b = _line(True, code=2)
+    c = cvm.Line(
+        2, date(2024, 12, 31), 1, "DRE", True, "3.11", None, date(2024, 12, 31), Decimal(999), "MIL"
+    )  # mesma chave de b, valor diferente
+    kept, identical, conflicts = cvm.dedupe([a, a, b, c])
+    assert kept == [a]
+    assert identical == 1
+    assert len(conflicts) == 1 and conflicts[0][0] == 2

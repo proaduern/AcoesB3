@@ -142,6 +142,11 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
                 raise ValueError(f"arquivo esperado ausente no zip: {name}")
             parsed = cvm.parse_statement(members[name], statement, consolidated, rules, per_share)
             lines.extend(parsed)
+    lines, identical_dups, conflicts = cvm.dedupe(lines)
+    if conflicts:
+        log.warning(
+            "%s %d: contas com valores conflitantes (ignoradas): %s", doc_type, year, conflicts[:5]
+        )
     lines = cvm.choose_scope(lines)
     ids = _filing_ids(conn, doc_type, lines)
     # Documento fora do índice não tem data de entrega: fica de fora, mas registrado.
@@ -182,6 +187,8 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
         "filings_with_lines": len(filing_ids),
         "share_counts": shares,
         "orphan_docs": [[c, r.isoformat(), v] for c, r, v in orphan],
+        "identical_duplicates": identical_dups,
+        "conflicting_keys": [[str(v) for v in k] for k in conflicts],
     }
 
 

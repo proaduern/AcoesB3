@@ -1,6 +1,6 @@
 name: probe-sources
 # Temporário: carga histórica completa num Postgres descartável para medir tamanho e
-# exercitar os parsers em todos os anos (rodada 3). Será removido ao fim da fase 1.
+# exercitar os parsers em todos os anos (rodada 4). Será removido ao fim da fase 1.
 on:
   push:
     branches: [ccr-c01e6dec-u8z1ix]
@@ -49,4 +49,6 @@ jobs:
           psql "$NEON_DATABASE_URL" -c "select extract(year from trade_date) y, count(*), count(distinct security_id) from quote_daily group by 1 order by 1"
           psql "$NEON_DATABASE_URL" -c "select source_scale, count(*) from financial_line group by 1"
           psql "$NEON_DATABASE_URL" -c "select s.ticker, q.trade_date, q.close from quote_daily q join security s on s.id=q.security_id where s.ticker in ('PETR4','TAEE11','WEGE3') and q.trade_date in ('2024-01-02','2026-09-30') order by 1,2"
+          psql "$NEON_DATABASE_URL" -c "select job, detail->'identical_duplicates' dup, detail->'conflicting_keys' conf, detail->'orphan_docs' orf from collection_run where job like 'cvm_%' and (detail->>'identical_duplicates' <> '0' or detail->>'conflicting_keys' <> '[]' or detail->>'orphan_docs' <> '[]' or detail->>'orphan_doc_ids' <> '[]')"
+          psql "$NEON_DATABASE_URL" -c "select doc_type, percentile_disc(array[0.5,0.9,0.99]) within group (order by f.received_date - f.reference_date) from filing f where version=1 and doc_type in ('DFP','ITR') group by 1"
           psql "$NEON_DATABASE_URL" -c "select percentile_disc(array[0.5,0.9,0.99]) within group (order by f.received_date - f.reference_date) from filing f where doc_type='ITR' and version=1"
