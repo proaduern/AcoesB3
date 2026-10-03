@@ -22,7 +22,7 @@
 
 ## Carga completa medida (03/10/2026)
 
-Primeiro medida no GitHub Actions contra um Postgres 16 descartável (~19 min); depois repetida no Neon (ver acima).
+Primeiro medida no GitHub Actions contra um Postgres 16 descartável (~19 min); depois repetida no Neon (ver "Carga no Neon").
 
 | Tabela | Linhas | Tamanho |
 |---|---:|---:|
