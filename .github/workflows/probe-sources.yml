@@ -2,7 +2,7 @@ name: probe-sources
 on:
   push:
     branches: [ccr-c01e6dec-u8z1ix]
-    paths: [scripts/probe_sources.py, .github/workflows/probe-sources.yml]
+    paths: [scripts/probe_sources2.py, .github/workflows/probe-sources.yml]
   workflow_dispatch:
 jobs:
   probe:
@@ -14,4 +14,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests
-      - run: python scripts/probe_sources.py
+      - run: python scripts/probe_sources2.py
+      - name: Neon (só leitura)
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          psql "$NEON_DATABASE_URL" -At -c "select version();" \
+            -c "select pg_size_pretty(pg_database_size(current_database()));" \
+            -c "select count(*) from information_schema.tables where table_schema='public';"
