@@ -144,10 +144,11 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
             lines.extend(parsed)
     lines = cvm.choose_scope(lines)
     ids = _filing_ids(conn, doc_type, lines)
-    orphan = {(x.cvm_code, x.reference_date, x.version) for x in lines} - ids.keys()
+    # Documento fora do índice não tem data de entrega: fica de fora, mas registrado.
+    orphan = sorted({(x.cvm_code, x.reference_date, x.version) for x in lines} - ids.keys())
     if orphan:
-        # Não deve acontecer: toda versão nas demonstrações aparece no índice.
-        raise ValueError(f"{len(orphan)} documentos sem linha no índice, ex.: {sorted(orphan)[:3]}")
+        log.warning("%s %d: documentos fora do índice: %s", doc_type, year, orphan)
+        lines = [x for x in lines if (x.cvm_code, x.reference_date, x.version) in ids]
     filing_ids = sorted(set(ids.values()))
     with conn.cursor() as cur:
         cur.execute("DELETE FROM financial_line WHERE filing_id = ANY(%s)", (filing_ids,))
@@ -170,7 +171,12 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
                 )
         cur.execute("UPDATE filing SET has_lines = true WHERE id = ANY(%s)", (filing_ids,))
     shares = _load_share_counts(conn, doc_type, members[f"{prefix}composicao_capital_{year}.csv"])
-    return {"lines": len(lines), "filings_with_lines": len(filing_ids), "share_counts": shares}
+    return {
+        "lines": len(lines),
+        "filings_with_lines": len(filing_ids),
+        "share_counts": shares,
+        "orphan_docs": [[c, r.isoformat(), v] for c, r, v in orphan],
+    }
 
 
 def _load_share_counts(conn, doc_type: str, raw: bytes) -> int:
@@ -224,9 +230,11 @@ def _load_fca_securities(conn, raw: bytes) -> dict:
             (list({r.doc_id for r in rows}),),
         )
     }
-    missing = {r.doc_id for r in rows} - by_doc.keys()
+    # Documento fora do índice não tem data de entrega: fica de fora, mas registrado.
+    missing = sorted({r.doc_id for r in rows} - by_doc.keys())
     if missing:
-        raise ValueError(f"FCA valor_mobiliario: {len(missing)} ID_Documento fora do índice")
+        log.warning("FCA valor_mobiliario: ID_Documento fora do índice: %s", missing)
+    rows = [r for r in rows if r.doc_id in by_doc]
     filing_ids = sorted({by_doc[r.doc_id][0] for r in rows})
     with conn.cursor() as cur:
         cur.execute("DELETE FROM company_security WHERE filing_id = ANY(%s)", (filing_ids,))
@@ -253,7 +261,7 @@ def _load_fca_securities(conn, raw: bytes) -> dict:
             ],
         )
         cur.execute("UPDATE filing SET has_lines = true WHERE id = ANY(%s)", (filing_ids,))
-    return {"securities": len(rows)}
+    return {"securities": len(rows), "orphan_doc_ids": missing}
 
 
 # --- COTAHIST ---------------------------------------------------------------

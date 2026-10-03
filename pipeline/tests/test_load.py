@@ -190,3 +190,20 @@ def test_cotahist_fatcot_e_filtro(conn, served):
     # Reprocessar não duplica
     load.load_cotahist(conn, url, force=True)
     assert conn.execute("SELECT count(*) FROM quote_daily").fetchone()[0] == 5
+
+
+def test_documento_fora_do_indice_e_ignorado_e_registrado(conn, served):
+    idx = fixture_bytes("fca_cia_aberta_2026.csv").decode("latin-1").splitlines()
+    vm = fixture_bytes("fca_cia_aberta_valor_mobiliario_2026.csv").decode("latin-1")
+    # remove do índice o documento da Taesa: as linhas dela em valor_mobiliario ficam órfãs
+    taesa_doc = next(ln.split(";")[6] for ln in idx[1:] if ln.split(";")[4] == "020257")
+    idx = [ln for ln in idx if ln.split(";")[6] != taesa_doc]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("fca_cia_aberta_2026.csv", ("\n".join(idx) + "\n").encode("latin-1"))
+        z.writestr("fca_cia_aberta_valor_mobiliario_2026.csv", vm.encode("latin-1"))
+    served[load.cvm.doc_url("FCA", 2026)] = buf.getvalue()
+    result = load.load_doc_year(conn, "FCA", 2026)
+    assert result["orphan_doc_ids"] == [int(taesa_doc)]
+    tickers = {r[0] for r in conn.execute("SELECT ticker FROM company_security")}
+    assert "TAEE11" not in tickers and "BBAS3" in tickers

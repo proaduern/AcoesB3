@@ -1,6 +1,6 @@
 name: probe-sources
 # Temporário: carga histórica completa num Postgres descartável para medir tamanho e
-# exercitar os parsers em todos os anos. Será removido ao fim da fase 1.
+# exercitar os parsers em todos os anos (rodada 2). Será removido ao fim da fase 1.
 on:
   push:
     branches: [ccr-c01e6dec-u8z1ix]
@@ -34,10 +34,15 @@ jobs:
       - run: acoesb3 cad
       - run: acoesb3 cvm --doc FCA
       - run: acoesb3 cvm --doc DFP
+        if: always()
       - run: acoesb3 cvm --doc ITR --from-year 2011
+        if: always()
       - run: acoesb3 cotahist
+        if: always()
       - run: acoesb3 size
+        if: always()
       - name: Resumo
+        if: always()
         run: |
           psql "$NEON_DATABASE_URL" -c "select job, status, finished_at - started_at as dur, detail from collection_run order by id"
           psql "$NEON_DATABASE_URL" -c "select doc_type, extract(year from reference_date) y, count(*), count(*) filter (where has_lines) com_contas from filing group by 1,2 order by 1,2"
