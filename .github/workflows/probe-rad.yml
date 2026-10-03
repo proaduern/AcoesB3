@@ -17,17 +17,21 @@ jobs:
         run: |
           import re, requests
           s = requests.Session(); s.headers.update({"User-Agent": "Mozilla/5.0 AcoesB3-probe"})
-          base = "https://www.rad.cvm.gov.br/ENET/"
-          r = s.get(base + "frmConsultaExternaCVM.aspx", timeout=60)
-          print("=====HTML", r.status_code, r.url)
-          print(r.text)
+          r = s.get("https://www.rad.cvm.gov.br/ENETWeb/frmConsultaExternaCVM.aspx", timeout=60)
+          print("=====HTML", r.status_code, r.url, len(r.text))
+          html = r.text
+          # remove blocos grandes de estilo e viewstate
+          html = re.sub(r"<style.*?</style>", "<style/>", html, flags=re.S)
+          html = re.sub(r'value="[A-Za-z0-9+/=]{200,}"', 'value="..."', html)
+          print(html[:30000])
           print("=====END")
-          for src in re.findall(r'(?:src|href)="([^"]+\.js[^"]*)"', r.text):
-              if "ruxit" in src:
+          for src in re.findall(r'src="([^"]+)"', r.text):
+              if "ruxit" in src or not (".js" in src or "ScriptResource" in src or "WebResource" in src):
                   continue
-              url = src if src.startswith("http") else requests.compat.urljoin(r.url, src)
+              url = requests.compat.urljoin(r.url, src)
               js = s.get(url, timeout=60)
-              print("=====JS", url, js.status_code, len(js.text))
               t = js.text
-              for m in re.finditer(r"ajax|url\s*:|\.aspx/|ListarDocumentos|POST", t):
-                  print("   ", t[max(0, m.start()-300):m.start()+600].replace("\n", " "))
+              print("=====JS", url[:150], js.status_code, len(t))
+              hits = list(re.finditer(r"\.aspx/\w+|ListarDocumentos|ajax\(|url\s*:", t))
+              for m in hits[:15]:
+                  print("   ", t[max(0, m.start()-400):m.start()+800].replace("\n", " "))
