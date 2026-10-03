@@ -1,0 +1,47 @@
+name: compute
+# Fase 2: fatos anuais, outliers, eventos societários e retratos do filtro.
+# Primeira execução depois da migração 0004: marque reload_dfp para regravar as contas de
+# DVA de bancos e seguradoras (as contas novas só valem para documentos recarregados).
+on:
+  workflow_dispatch:
+    inputs:
+      reload_dfp:
+        description: "Recarregar todas as DFP antes de calcular (~10 min)"
+        type: boolean
+        default: false
+      step:
+        description: "Etapa (vazio = todas): annual, outliers, events ou screens"
+        required: false
+concurrency:
+  group: neon-writer
+  cancel-in-progress: false
+jobs:
+  compute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: pipeline
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      RELOAD_DFP: ${{ inputs.reload_dfp }}
+      STEP: ${{ inputs.step }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Verifica segredo
+        run: test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
+      - name: Recarrega DFP
+        if: ${{ inputs.reload_dfp }}
+        run: acoesb3 cvm --doc DFP --force
+      - name: Calcula
+        run: |
+          args=()
+          [ -n "$STEP" ] && args+=(--step "$STEP")
+          acoesb3 compute "${args[@]}"
+      - name: Pendências de revisão
+        run: acoesb3 review list
+      - run: acoesb3 size
