@@ -101,8 +101,18 @@ class World:
         ).fetchone()[0]
         self.next_doc = 1
 
-    def company(self, cvm, ticker_root, sector="Energia", volume=3_000_000, every=1, lpa=None,
-                dividends=None, split=None):  # fmt: skip
+    def company(
+        self,
+        cvm,
+        ticker_root,
+        sector="Energia",
+        volume=3_000_000,
+        every=1,
+        lpa=None,
+        dividends=None,
+        split=None,
+        shares=None,
+    ):
         c = self.conn
         c.execute(
             "INSERT INTO company (cvm_code, cnpj, name, cvm_sector, status, source)"
@@ -121,8 +131,16 @@ class World:
             c.execute(
                 "INSERT INTO indicator_annual (filing_id, cvm_code, reference_date, plan, profit,"
                 " equity, jcp, dividends, dividends_source, lpa_on, shares_on, shares_pn)"
-                " VALUES (%s, %s, %s, 'comum', 100, 500, %s, %s, 'dva', %s, 1000, 0)",
-                (fid, cvm, date(y, 12, 31), div[0], div[1], (lpa(y) if lpa else D(1))),
+                " VALUES (%s, %s, %s, 'comum', 100, 500, %s, %s, 'dva', %s, %s, 0)",
+                (
+                    fid,
+                    cvm,
+                    date(y, 12, 31),
+                    div[0],
+                    div[1],
+                    (lpa(y) if lpa else D(1)),
+                    (shares(y) if shares else 1000),
+                ),
             )
         sec = c.execute(
             "INSERT INTO security (ticker, isin, especi, short_name, first_date, last_date)"
@@ -282,13 +300,20 @@ def test_outlier_pendente_fica_fora_e_usuario_pode_liberar(conn):
         review.decide_outlier(conn, 1, date(2020, 12, 31), "include", None)
 
 
+def post_split_shares(y):  # ações em circulação no fim do exercício: dobram em 2022
+    return 1000 if y <= 2021 else 2000
+
+
 def pre_split_lpa(y):
     return D(2) if y <= 2021 else D(1)  # LPA publicado cai de 2 para 1 com o desdobramento 2:1
 
 
 def test_desdobramento_detectado_evita_queda_falsa_de_dps(conn):
     w = World(conn)
-    w.company(1, "ABCD", lpa=pre_split_lpa, split=(date(2022, 6, 1), D("20"), D("10")))
+    w.company(
+        1, "ABCD", lpa=pre_split_lpa, shares=post_split_shares,
+        split=(date(2022, 6, 1), D("20"), D("10")),
+    )  # fmt: skip
     out = run(conn)
     ev = conn.execute("SELECT factor, status FROM corporate_event").fetchall()
     assert ev == [(D("2"), "auto")]
@@ -307,7 +332,7 @@ def test_desdobramento_detectado_evita_queda_falsa_de_dps(conn):
 
 def test_evento_suspeito_so_vale_depois_de_confirmado(conn):
     w = World(conn)
-    sec = w.company(1, "ABCD", lpa=pre_split_lpa)
+    sec = w.company(1, "ABCD", lpa=pre_split_lpa, shares=post_split_shares)
     # salto de 50% sem mudança de DISMES: suspeito
     for d, close in ((date(2022, 5, 31), D("20")), (date(2022, 6, 1), D("10"))):
         conn.execute(
@@ -326,7 +351,7 @@ def test_evento_suspeito_so_vale_depois_de_confirmado(conn):
 
 def test_evento_manual_e_ticker_inexistente(conn):
     w = World(conn)
-    w.company(1, "ABCD", lpa=pre_split_lpa)
+    w.company(1, "ABCD", lpa=pre_split_lpa, shares=post_split_shares)
     review.add_event(conn, "ABCD3", date(2022, 6, 1), D(2), "bonificação não detectada")
     run(conn)
     assert criterion(conn, 1, TODAY, "queda_dividendo_por_acao")[2]["drop_years"] == []

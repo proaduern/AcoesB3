@@ -31,7 +31,8 @@ que veio das fixtures (linhas copiadas dos arquivos oficiais da DFP 2024).
   (`2.08.01` é capital social, não PL do controlador); seguradora `3.13.01` e `2.03 − 2.03.09`.
 - A CVM só dá ações de 2020 em diante, e LPA/dividendo por ação publicados não são reajustados por
   desdobramentos posteriores (o comparativo `PENÚLTIMO` não é guardado). Por isso o dividendo por
-  ação sai de payout × LPA ajustado por eventos detectados, e o DY de valor de mercado (2020+).
+  ação sai de total ÷ ações (2020+) ou, antes disso, de payout × LPA (estimado), sempre ajustado
+  por eventos detectados, e o DY de valor de mercado (2020+).
 
 ## Como rodar
 
@@ -60,8 +61,8 @@ que veio das fixtures (linhas copiadas dos arquivos oficiais da DFP 2024).
 ## Limitações conhecidas (honestas)
 
 - "Pago" é "declarado no exercício" (DVA): a CVM não traz data de pagamento.
-- DPS = payout × LPA é exato para uma classe de ação; com ON e PN é aproximação (os dividendos
-  por classe diferem).
+- Antes de 2020, DPS = payout × LPA: exato com uma classe de ação; com ON e PN é aproximação (os
+  dividendos por classe diferem). Pares de anos com métodos diferentes não são comparados.
 - A data de coleta de cada retrato é a do arquivo de origem do primeiro carregamento da versão
   (`filing.source_file_id` não é atualizado em recargas).
 - Se a empresa mudar a data de encerramento do exercício, dois exercícios no mesmo ano civil

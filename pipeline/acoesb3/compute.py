@@ -431,7 +431,9 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
                     dividends_source=r[10],
                     lpa=lpa,
                     market_cap=caps[r[0]],
+                    shares=(r[13] + r[14]) if r[13] is not None and r[14] is not None else None,
                     split_factor=corporate.cumulative_factor(ev, r[4], as_of),
+                    shares_factor=corporate.cumulative_factor(ev, ref, as_of),
                     outlier=(cvm, ref) in outliers and (cvm, ref) not in released,
                 )
             res = screen.evaluate(

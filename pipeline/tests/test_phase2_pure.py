@@ -464,3 +464,53 @@ def test_reprovacao_vence_dado_indisponivel_e_setor_excluido_nao_avalia():
 def test_parametro_ausente_falha_em_vez_de_assumir_valor():
     with pytest.raises(KeyError):
         screen.ScreenParams.from_config({"screen.roe_min": 0.1})
+
+
+# --- Dividendo por ação: total / ações (exato) x payout x LPA (estimado) -------
+
+
+def with_shares(ys, from_year, shares=1000):
+    for y in ys.values():
+        if y.year >= from_year:
+            y.shares = shares
+    return ys
+
+
+def test_dps_exato_usa_total_sobre_acoes_e_nao_precisa_de_lucro_positivo():
+    ys = with_shares(good_years(), 2016)
+    ys[2020].profit = D(
+        -5
+    )  # prejuízo: o método estimado pularia o ano; o exato não depende do lucro
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert set(c.detail["method"].values()) == {"exact"}
+    assert c.detail["comparable_pairs"] == 9
+    assert c.detail["dps"][2020] == str(D(50) / D(1000))
+
+
+def test_dps_pares_de_metodos_diferentes_sao_pulados():
+    # 2016-2019 estimado, 2020-2025 exato: o par 2019->2020 mistura métodos e não conta
+    ys = with_shares(good_years(), 2020)
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert c.detail["method"][2019] == "estimated" and c.detail["method"][2020] == "exact"
+    assert c.detail["comparable_pairs"] == 8
+
+
+def test_dps_exato_ajusta_por_evento_depois_do_fim_do_exercicio():
+    # desdobramento 2:1 em 2022: ações dobram de 1000 para 2000 e o dividendo total é igual
+    ys = with_shares(good_years(), 2016)
+    for y in ys.values():
+        y.shares = 1000 if y.year <= 2021 else 2000
+        y.shares_factor = D(2) if y.year <= 2021 else D(1)
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert c.detail["drop_years"] == [] and c.status == "pass"
+    for y in ys.values():  # sem o evento detectado, a queda de 2022 aparece
+        y.shares_factor = D(1)
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert c.detail["drop_years"] == [2022]
+
+
+def test_dps_exato_ano_de_outlier_nao_tem_dps():
+    ys = with_shares(good_years(), 2016)
+    ys[2023].outlier = True
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert 2023 not in c.detail["dps"] and c.detail["comparable_pairs"] == 7

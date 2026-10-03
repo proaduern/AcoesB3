@@ -19,6 +19,9 @@ jobs:
   trial:
     runs-on: ubuntu-latest
     timeout-minutes: 170
+    concurrency:
+      group: phase2-trial
+      cancel-in-progress: true
     services:
       postgres:
         image: postgres:16
