@@ -1,6 +1,6 @@
 name: probe-sources
 # Temporário: carga histórica completa num Postgres descartável para medir tamanho e
-# exercitar os parsers em todos os anos (rodada 2). Será removido ao fim da fase 1.
+# exercitar os parsers em todos os anos (rodada 3). Será removido ao fim da fase 1.
 on:
   push:
     branches: [ccr-c01e6dec-u8z1ix]

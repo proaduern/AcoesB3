@@ -170,7 +170,13 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
                     )
                 )
         cur.execute("UPDATE filing SET has_lines = true WHERE id = ANY(%s)", (filing_ids,))
-    shares = _load_share_counts(conn, doc_type, members[f"{prefix}composicao_capital_{year}.csv"])
+    # composicao_capital não existe nos zips antigos (ex.: DFP 2010): dado indisponível.
+    shares_name = f"{prefix}composicao_capital_{year}.csv"
+    shares = (
+        _load_share_counts(conn, doc_type, members[shares_name])
+        if shares_name in members
+        else "arquivo ausente no zip"
+    )
     return {
         "lines": len(lines),
         "filings_with_lines": len(filing_ids),

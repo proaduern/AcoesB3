@@ -20,11 +20,13 @@ SHARES_HEADER = (
 )
 
 
-def make_zip(prefix: str, year: int) -> bytes:
+def make_zip(prefix: str, year: int, with_shares: bool = True) -> bytes:
     """Zip com os arquivos da fixture; demonstrações sem amostra entram só com cabeçalho."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
-        names = [f"{prefix}{year}.csv", f"{prefix}composicao_capital_{year}.csv"]
+        names = [f"{prefix}{year}.csv"]
+        if with_shares:
+            names.append(f"{prefix}composicao_capital_{year}.csv")
         names += [
             f"{prefix}{s}_{sc}_{year}.csv" for s in load.cvm.STATEMENTS for sc in ("con", "ind")
         ]
@@ -207,3 +209,37 @@ def test_documento_fora_do_indice_e_ignorado_e_registrado(conn, served):
     assert result["orphan_doc_ids"] == [int(taesa_doc)]
     tickers = {r[0] for r in conn.execute("SELECT ticker FROM company_security")}
     assert "TAEE11" not in tickers and "BBAS3" in tickers
+
+
+def test_zip_antigo_sem_composicao_capital(conn, served):
+    # DFP 2010 real não tem composicao_capital: carrega o resto e registra a ausência
+    served[load.cvm.doc_url("DFP", 2024)] = make_zip("dfp_cia_aberta_", 2024, with_shares=False)
+    result = load.load_doc_year(conn, "DFP", 2024)
+    assert result["share_counts"] == "arquivo ausente no zip"
+    assert result["lines"] > 0
+    assert conn.execute("SELECT count(*) FROM share_count").fetchone()[0] == 0
+
+
+def test_carga_historica_segue_apos_ano_com_erro(conn, served, monkeypatch):
+    from acoesb3 import cli
+
+    served[load.cvm.doc_url("DFP", 2024)] = make_zip("dfp_cia_aberta_", 2024)
+    served[load.cvm.doc_url("DFP", 2023)] = b"isto nao e um zip"
+    monkeypatch.setattr(cli, "connect", lambda: _NoClose(conn))
+    with pytest.raises(SystemExit, match="cvm_dfp_2023"):
+        cli.main(["cvm", "--doc", "DFP", "--from-year", "2023", "--to-year", "2024"])
+    runs = dict(conn.execute("SELECT job, status FROM collection_run").fetchall())
+    assert runs == {"cvm_dfp_2023": "failed", "cvm_dfp_2024": "ok"}
+
+
+class _NoClose:
+    """Usa a conexão do teste dentro do `with connect()` da CLI sem fechá-la."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __enter__(self):
+        return self.conn
+
+    def __exit__(self, *exc):
+        return False

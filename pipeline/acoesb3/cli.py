@@ -54,19 +54,41 @@ def _years(a, first_key, conn) -> range:
     return range(start, end + 1)
 
 
+def _run_all(conn, steps) -> None:
+    """Executa todas as etapas; uma falha não impede as seguintes, mas o comando falha no fim
+    (o GitHub Actions então manda e-mail de falha)."""
+    failed = []
+    for job, fn in steps:
+        try:
+            _run(conn, job, fn)
+        except Exception:
+            log.exception("falha em %s", job)
+            failed.append(job)
+    if failed:
+        raise SystemExit(f"etapas com falha: {', '.join(failed)}")
+
+
 def cmd_cvm(conn, a) -> None:
-    for year in _years(a, "cvm.first_year", conn):
-        _run(
-            conn,
-            f"cvm_{a.doc.lower()}_{year}",
-            lambda y=year: load.load_doc_year(conn, a.doc, y, a.force),
-        )
+    _run_all(
+        conn,
+        [
+            (f"cvm_{a.doc.lower()}_{y}", lambda y=y: load.load_doc_year(conn, a.doc, y, a.force))
+            for y in _years(a, "cvm.first_year", conn)
+        ],
+    )
 
 
 def cmd_cotahist(conn, a) -> None:
-    for year in _years(a, "cotahist.first_year", conn):
-        url = load.cotahist_year_url(year)
-        _run(conn, f"cotahist_{year}", lambda u=url: load.load_cotahist(conn, u, a.force))
+    _run_all(
+        conn,
+        [
+            (
+                f"cotahist_{y}",
+                lambda y=y: load.load_cotahist(conn, load.cotahist_year_url(y), a.force),
+            )
+            for y in _years(a, "cotahist.first_year", conn)
+        ],
+    )
 
 
 def recent_weekdays(today: date, n: int) -> list[date]:
@@ -95,16 +117,10 @@ def cmd_daily(conn, a) -> None:
     for day in recent_weekdays(today, lookback):
         url = load.cotahist_day_url(day)
         steps.append((f"cotahist_{day:%Y%m%d}", lambda u=url: load.load_cotahist(conn, u)))
-    failed = []
-    for job, fn in steps:
-        try:
-            _run(conn, job, fn)
-        except Exception:
-            log.exception("falha em %s", job)
-            failed.append(job)
-    cmd_size(conn, a)
-    if failed:
-        raise SystemExit(f"etapas com falha: {', '.join(failed)}")
+    try:
+        _run_all(conn, steps)
+    finally:
+        cmd_size(conn, a)
 
 
 def cmd_size(conn, a) -> None:
