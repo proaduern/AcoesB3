@@ -18,7 +18,38 @@
     interrompe as outras; no fim o job falha e o GitHub manda e-mail.
   - `backfill`: carga histórica manual por fonte e intervalo de anos.
 - `docs/fontes.md`: formatos verificados nos arquivos reais.
-- Testes: 29, com linhas reais copiadas dos arquivos oficiais.
+- Testes: 33, com linhas reais copiadas dos arquivos oficiais.
+
+## Carga completa medida (03/10/2026)
+
+Rodada no GitHub Actions contra um Postgres 16 descartável (mesmo código, mesmas fontes),
+porque o segredo do Neon não está disponível (ver abaixo). Tempo total: ~19 min.
+
+| Tabela | Linhas | Tamanho |
+|---|---:|---:|
+| `quote_daily` (COTAHIST 2010–2026, só ações/units) | 1.256.975 | 165,0 MB |
+| `financial_line` (DFP 2010–2026, ITR 2011–2026) | 950.941 | 113,5 MB |
+| `filing` (todas as versões de DFP/ITR/FCA) | 75.503 | 28,0 MB |
+| demais | | ~5 MB |
+| **Total** | | **319,6 MB** (32% de 1 GB) |
+
+Crescimento estimado: ~20 MB/ano (≈90 mil cotações + ≈60 mil contas).
+
+Conferências na carga: PETR4 fechou 37,78 em 02/01/2024 e 49,12 em 30/09/2026; TAEE11 38,13 e 41,81;
+WEGE3 36,57 e 49,46.
+
+Problemas reais encontrados nas fontes e como ficaram:
+
+| Problema | Tratamento |
+|---|---|
+| `composicao_capital` não existe nos zips DFP/ITR até 2019 | Quantidade de ações fica indisponível nesses anos (registrado na execução). |
+| A partir de 2021, linhas duplicadas byte a byte em DFP/ITR (ex.: CPX Distribuidora; 1.005 no ITR 2024) | Fica uma. |
+| Mesma conta/período com valores diferentes no mesmo documento (poucos casos: DFP 2022–2024, ITR 2021) | Nenhum dos valores é gravado (indisponível); chaves registradas em `collection_run.detail`. |
+| FCA 2021: 1 documento em `valor_mobiliario` fora do índice | Ignorado (sem data de entrega) e registrado. |
+| COTAHIST 2020–2022: BDRs com `CODBDI = 02` | Filtro pelo tipo de ativo do ISIN. |
+
+Prazos de entrega observados (versão 1, dias entre data-base e entrega à CVM):
+ITR mediana 43, p90 47; DFP mediana 82, p90 94.
 
 ## Como fazer a primeira carga (depois de corrigir o segredo, ver abaixo)
 
