@@ -67,3 +67,15 @@ As linhas usadas nos testes (`pipeline/tests/fixtures/`) foram copiadas desses a
 - **Em 2020–2022 a B3 marcou BDRs com `CODBDI = 02`** (ESPECI `DRN`/`DR3`, ISIN tipo `BDR`,
   ex.: `A1AP34`). Em 2021 eram 718 dos 1.309 papéis com CODBDI 02. Daí o filtro pelo ISIN.
 - `DT_REFER`/datas: AAAAMMDD. Arquivo de 1986 tem ISIN no formato antigo (sem `BR`).
+
+## CVM — RAD/ENET (consulta externa de documentos)
+
+Verificado em 03/10/2026:
+- `https://www.rad.cvm.gov.br/ENET/frmConsultaExternaCVM.aspx` foi **descontinuada em 06/07/2026**
+  e redireciona para `https://www.rad.cvm.gov.br/ENETWeb/frmConsultaExternaCVM.aspx`.
+- A listagem (`frmConsultaExternaCVM.aspx/ListarDocumentos`, POST JSON com `dataDe`, `dataAte`,
+  `empresa`, `categoria`...) envia um token do **Google reCAPTCHA v3** e, se o servidor pedir
+  (`SolicitarCaptcha = 'S'`), um desafio reCAPTCHA v2. Não é usada pelo pipeline: automatizar
+  exigiria contornar o CAPTCHA.
+- O conjunto de dados IPE (documentos eventuais) da CVM Dados Abertos também é semanal, então
+  não serve para detectar entrega no mesmo dia.

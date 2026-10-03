@@ -96,7 +96,7 @@ Duas séries de preço:
 
 ## 8. Backtest
 
-- **Ponto no tempo**: um balanço só entra a partir da data de entrega à CVM. Empresas canceladas incluídas (sem viés de sobrevivência).
+- **Ponto no tempo**: um balanço só entra a partir da data de entrega à CVM **da versão cujos números estão guardados** (decisão de 03/10/2026; view `filing_available`). Documento reapresentado só entra na data da reapresentação, mesmo que a 1ª versão seja anterior. Empresas canceladas incluídas (sem viés de sobrevivência).
 - **Período**: 2012 em diante. Ajuste até 3 anos atrás; os **3 últimos anos ficam reservados para validação**.
 - **Comparação**: Ibovespa, IDIV e CDI, mais variações de parâmetros (DY desejado, K etc.).
 - **Critério de morte**: aviso se o retorno total perder do IDIV em mais de 50% das janelas móveis de 5 anos, **ou** se a queda máxima for mais de 10 p.p. pior que a do IDIV.
@@ -117,7 +117,7 @@ Duas séries de preço:
 - Todo indicador exibe fonte, data-base e data de coleta.
 - Escala da CVM (`ESCALA_MOEDA`: unidade vs mil) tratada e testada explicitamente.
 - Dado ausente aparece como "indisponível", nunca como zero ou valor antigo sem aviso.
-- Pelo menos 3 testes comparam valores contra números de balanços publicados, conferidos manualmente pelo usuário.
+- Pelo menos 3 testes comparam valores contra números de balanços publicados, conferidos manualmente pelo usuário. **Feito (03/10/2026)**: lucro atribuído aos controladores em 2024 de WEG (R$ 6.042.593 mil), Itaú (R$ 41.085.000 mil) e BB Seguridade (R$ 8.703.353 mil), conferidos pelo usuário contra os balanços publicados (`pipeline/tests/test_cvm.py::test_lucro_controlador_por_plano_de_contas`).
 
 ## 11. Fases
 
@@ -133,8 +133,8 @@ Duas séries de preço:
 ## 12. A verificar na implementação (não assumir)
 
 - ~~Limite atual de armazenamento do Neon grátis.~~ **Verificado (03/10/2026)**: 1 GB por projeto (até 20 GB somando 100 projetos), 100 CU-hora/projeto, 5 GB de tráfego de saída/projeto. Carga completa 2010–2026 medida: **320 MB** (32% do limite), crescimento ~20 MB/ano; ver `docs/fase1.md`.
-- ~~Atraso real entre a entrega à CVM e a disponibilidade nos Dados Abertos~~ **Verificado (03/10/2026)**: DFP/ITR/FCA são atualizados **semanalmente** (página oficial do conjunto de dados; arquivos regerados no domingo 27/09). Atraso de até ~7 dias corridos, mais que 1 dia útil. O cadastro de companhias é diário. **Pendente de decisão**: detecção da entrega via RAD/ENET (endpoint ainda não verificado).
-- Os arquivos de demonstrações trazem só a versão mais recente de cada documento; o índice traz todas as versões com a data de entrega. Versões antigas só existem no banco se coletadas na época. **Pendente de decisão**: no backtest, qual data usar para um documento reapresentado (ver `docs/fase1.md`).
+- ~~Atraso real entre a entrega à CVM e a disponibilidade nos Dados Abertos~~ **Verificado (03/10/2026)**: DFP/ITR/FCA são atualizados **semanalmente** (página oficial do conjunto de dados; arquivos regerados no domingo 27/09). Atraso de até ~7 dias corridos, mais que 1 dia útil. O cadastro de companhias é diário. **Detecção via RAD/ENET inviável**: desde 06/07/2026 a consulta externa mudou para `/ENETWeb/` e a listagem de documentos exige Google reCAPTCHA; automatizá-la exigiria contornar o CAPTCHA. **Decidido (03/10/2026)**: o usuário aceita o atraso semanal; não há detecção de entrega além dos Dados Abertos.
+- Os arquivos de demonstrações trazem só a versão mais recente de cada documento; o índice traz todas as versões com a data de entrega. Versões antigas só existem no banco se coletadas na época. **Decidido**: o backtest usa a data de entrega da versão guardada (seção 8).
 - Cobertura dos releases entregues à CVM para as empresas da lista.
 - Regras vigentes de tributação de dividendos (informativo; o sistema usa alíquotas configuráveis).
 - Disponibilidade e limites da brapi/Yahoo no plano grátis.

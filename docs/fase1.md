@@ -64,11 +64,10 @@ do GitHub Actions só valem lá). Recarga manual: Actions → `backfill` (també
 
 | Item | Motivo |
 |---|---|
-| Detecção de entrega via RAD/ENET | A CVM atualiza DFP/ITR/FCA **semanalmente** (passa de 1 dia útil, então a seção 12 manda usar o RAD/ENET). Não implementei porque o endpoint do RAD não foi verificado e a regra exige não inventar endpoint. Precisa de decisão (ver relatório). |
+| Detecção de entrega via RAD/ENET | Verificado: a consulta do RAD exige Google reCAPTCHA desde 06/07/2026 (ver `docs/fontes.md`). Não automatizável sem contornar o CAPTCHA. Decisão do usuário: aceitar o atraso semanal dos Dados Abertos. |
 | Cotação intradiária (brapi/Yahoo) | É só para exibição na tela (fase 5); a verificação de limites é item próprio da seção 12. |
 | Classificação setorial B3 | Não é CVM nem COTAHIST; entra quando o filtro precisar (fase 2). O cadastro guarda o setor declarado à CVM, que não é a classificação B3. |
 | Ajuste por desdobramento/grupamento e proventos | Fase 2. O `DISMES` (número de distribuição) do COTAHIST já é guardado para ajudar a detectar eventos. |
 | Ticker ↔ empresa no passado | O FCA só traz ticker a partir de certo ano (em 2010 vem vazio). Ligar papéis antigos à empresa (via ISIN/prefixo) fica para a fase 2. |
 | Comparativo (`PENÚLTIMO`) dos documentos | Só o exercício do próprio documento é guardado; o comparativo é o mesmo dado reapresentado no documento seguinte. |
 | Contas do DFC de investimento/financiamento | Não são contas fixas da CVM (código e descrição mudam por empresa). O FCFE da fase 3 vai precisar de uma regra para elas. |
-| Os 3 testes contra balanços publicados conferidos pelo usuário (seção 10) | Os testes usam valores dos arquivos da CVM. A conferência contra o balanço publicado precisa ser feita pelo usuário (ver relatório). |
