@@ -243,3 +243,22 @@ class _NoClose:
 
     def __exit__(self, *exc):
         return False
+
+
+def test_backtest_usa_data_da_versao_guardada(conn, served):
+    # BRB tem 3 versões no índice; simula que a versão 3 é a que tem números
+    served[load.cvm.doc_url("DFP", 2024)] = make_zip("dfp_cia_aberta_", 2024)
+    load.load_doc_year(conn, "DFP", 2024)
+    conn.execute("UPDATE filing SET has_lines = true WHERE cvm_code = 14206 AND version = 3")
+    row = conn.execute(
+        "SELECT version, available_from, first_received_date FROM filing_available"
+        " WHERE cvm_code = 14206"
+    ).fetchall()
+    assert len(row) == 1
+    version, available_from, first = row[0]
+    v3 = conn.execute(
+        "SELECT received_date FROM filing WHERE cvm_code = 14206 AND version = 3"
+    ).fetchone()[0]
+    assert version == 3
+    assert available_from == v3  # data da versão guardada, não a da 1ª entrega
+    assert first == date(2025, 4, 9) and available_from > first
