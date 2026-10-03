@@ -24,7 +24,7 @@ Sistema pessoal de carteira de ações B3: filtro de empresas perenes, preço te
 
 ## Segredos
 - Nunca coloque credenciais no código nem peça que o usuário cole credenciais no chat.
-- Segredos ficam no GitHub Actions / Vercel. Nomes: `NEON_DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `ALLOWED_EMAILS`.
+- Segredos ficam no GitHub Actions / Vercel. Nomes: `NEON_DATABASE_URL` (conexão direta, sem `-pooler`, usada pelo pipeline no GitHub Actions), `NEON_DATABASE_URL_POOLED` (com `-pooler`, usada pela tela na Vercel), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `ALLOWED_EMAILS`.
 
 ## Fluxo de trabalho
 - Uma fase da especificação por sessão (seção 11). Fase atual: **1**.
