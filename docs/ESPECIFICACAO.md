@@ -1,6 +1,8 @@
 # AcoesB3 — Especificação v1
 
 Documento de decisões consolidado a partir de 32 perguntas respondidas pelo usuário (03/10/2026).
+
+**Status: aprovada pelo usuário em 03/10/2026, incluindo as suposições da seção 13.** Segredo `NEON_DATABASE_URL` já cadastrado no GitHub Actions.
 Todo parâmetro numérico abaixo é **configurável** no sistema; os valores são os padrões iniciais.
 
 ## 1. Objetivo
