@@ -64,7 +64,7 @@ do GitHub Actions só valem lá). Recarga manual: Actions → `backfill` (també
 
 | Item | Motivo |
 |---|---|
-| Detecção de entrega via RAD/ENET | Verificado: a consulta do RAD exige Google reCAPTCHA desde 06/07/2026 (ver `docs/fontes.md`). Não automatizável sem contornar o CAPTCHA. Alternativa pendente de decisão. |
+| Detecção de entrega via RAD/ENET | Verificado: a consulta do RAD exige Google reCAPTCHA desde 06/07/2026 (ver `docs/fontes.md`). Não automatizável sem contornar o CAPTCHA. Decisão do usuário: aceitar o atraso semanal dos Dados Abertos. |
 | Cotação intradiária (brapi/Yahoo) | É só para exibição na tela (fase 5); a verificação de limites é item próprio da seção 12. |
 | Classificação setorial B3 | Não é CVM nem COTAHIST; entra quando o filtro precisar (fase 2). O cadastro guarda o setor declarado à CVM, que não é a classificação B3. |
 | Ajuste por desdobramento/grupamento e proventos | Fase 2. O `DISMES` (número de distribuição) do COTAHIST já é guardado para ajudar a detectar eventos. |
