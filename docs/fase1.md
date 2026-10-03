@@ -22,8 +22,7 @@
 
 ## Carga completa medida (03/10/2026)
 
-Rodada no GitHub Actions contra um Postgres 16 descartável (mesmo código, mesmas fontes),
-porque o segredo do Neon não está disponível (ver abaixo). Tempo total: ~19 min.
+Primeiro medida no GitHub Actions contra um Postgres 16 descartável (~19 min); depois repetida no Neon (ver acima).
 
 | Tabela | Linhas | Tamanho |
 |---|---:|---:|
@@ -51,16 +50,20 @@ Problemas reais encontrados nas fontes e como ficaram:
 Prazos de entrega observados (versão 1, dias entre data-base e entrega à CVM):
 ITR mediana 43, p90 47; DFP mediana 82, p90 94.
 
-## Como fazer a primeira carga (depois de corrigir o segredo, ver abaixo)
+## Carga no Neon (03/10/2026)
 
-Actions → `backfill` → Run workflow, nesta ordem: `cad`, `FCA`, `DFP`, `ITR`, `cotahist`
-(campos de ano vazios = de 2010 até hoje). Depois disso o `collect-daily` mantém tudo em dia.
+Feita por um workflow temporário na branch de desenvolvimento (já removido): 68 etapas, todas `ok`,
+~35 min. Banco no Neon: **317,9 MB** (32% de 1 GB). Conferido no próprio Neon: lucro do controlador 2024
+WEG R$ 6.042.593 mil (LPA ON 1,44026), Itaú R$ 41.085.000 mil, BB Seguridade R$ 8.703.353 mil;
+fechamentos de 30/09/2026 PETR4 49,12, TAEE11 41,81, WEGE3 49,46.
+
+O `collect-daily` só começa a rodar quando os workflows estiverem na branch padrão (agendamentos
+do GitHub Actions só valem lá). Recarga manual: Actions → `backfill` (também só na branch padrão).
 
 ## Ficou de fora, e por quê
 
 | Item | Motivo |
 |---|---|
-| Carga real no Neon | O segredo `NEON_DATABASE_URL` chega **vazio** ao GitHub Actions (verificado: tamanho 0, idem `NEON_DATABASE_URL_POOLED`). A carga completa foi feita num Postgres descartável no Actions para validar e medir. |
 | Detecção de entrega via RAD/ENET | A CVM atualiza DFP/ITR/FCA **semanalmente** (passa de 1 dia útil, então a seção 12 manda usar o RAD/ENET). Não implementei porque o endpoint do RAD não foi verificado e a regra exige não inventar endpoint. Precisa de decisão (ver relatório). |
 | Cotação intradiária (brapi/Yahoo) | É só para exibição na tela (fase 5); a verificação de limites é item próprio da seção 12. |
 | Classificação setorial B3 | Não é CVM nem COTAHIST; entra quando o filtro precisar (fase 2). O cadastro guarda o setor declarado à CVM, que não é a classificação B3. |
