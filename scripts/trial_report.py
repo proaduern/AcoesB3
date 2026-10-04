@@ -170,6 +170,7 @@ def main():
 
     diagnostics(conn, today)
     fre_report(conn, cfg, today)
+    decisions_report(conn, cfg, today)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -253,6 +254,132 @@ def diagnostics(conn, today):
         (today,),
     ):
         out(f"   {names[cvm][:44]:44} {n0} de {nn} anos com proventos zero")
+
+
+def decisions_report(conn, cfg, today):
+    """Números para as decisões que sobraram da medição (outliers, escala, universo, proventos)."""
+    import difflib
+
+    names = dict(q(conn, "SELECT cvm_code, name FROM company"))
+
+    section("Escala FRE x DVA nos exercícios que divergem por fator de mil (DY decide quem está certo)")
+    by_company, _, _ = compute._company_securities(conn)
+    class_secs = {c: mapping.class_securities(s) for c, s in by_company.items()}
+    cap_rows = defaultdict(list)
+    for fid, cvm, received, ctype, approved, common, pref in q(
+        conn,
+        """SELECT f.id, f.cvm_code, f.received_date, c.capital_type, c.approved_on, c.shares_common, c.shares_pref
+           FROM fre_capital c JOIN filing f ON f.id = c.filing_id""",
+    ):
+        cap_rows[cvm].append((fid, received, ctype, approved, common, pref))
+    snaps = {c: shares.snapshots_from_capital(r) for c, r in cap_rows.items()}
+    cand = []
+    for cvm, ref, dva, fre_total in q(
+        conn,
+        """SELECT cvm_code, reference_date, jcp + dividends, fre_jcp + fre_dividends FROM indicator_annual
+           WHERE fre_dividends IS NOT NULL AND jcp IS NOT NULL AND jcp + dividends > 0 AND fre_jcp + fre_dividends > 0""",
+    ):
+        r = float(fre_total) / float(dva)
+        cls = "FRE~1000xDVA" if 500 <= r <= 2000 else "FRE~0,001xDVA" if 0.0005 <= r <= 0.002 else None
+        if cls:
+            cand.append((cls, cvm, ref, float(dva), float(fre_total)))
+    wanted = {(sid, ref) for _, cvm, ref, _, _ in cand for sid in class_secs.get(cvm, {}).values()}
+    prices = compute._fiscal_year_end_prices(conn, wanted, int(cfg["market.price_lookback_days"]))
+    tally = Counter()
+    examples = defaultdict(list)
+    for cls, cvm, ref, dva, fre_total in cand:
+        got = shares.shares_at(snaps.get(cvm, []), [], ref, date(2100, 1, 1), int(cfg["shares.max_snapshot_gap_days"]))
+        cap = None
+        if got:
+            cap = 0.0
+            for k, qty in (("on", got[0]), ("pn", got[1])):
+                if qty:
+                    sid = class_secs.get(cvm, {}).get(k)
+                    px = prices.get((sid, ref)) if sid else None
+                    cap = None if px is None or cap is None else cap + float(px) * qty
+        if not cap:
+            tally[(cls, "sem valor de mercado")] += 1
+            continue
+        ok_fre, ok_dva = 0 < fre_total / cap <= 0.6, 0 < dva / cap <= 0.6
+        verdict = ("os dois plausíveis" if ok_fre and ok_dva else "só FRE plausível" if ok_fre
+                   else "só DVA plausível" if ok_dva else "nenhum plausível")
+        tally[(cls, verdict)] += 1
+        if len(examples[(cls, verdict)]) < 4:
+            examples[(cls, verdict)].append(f"{names[cvm][:30]} {ref} DVA {dva:,.0f} FRE {fre_total:,.0f} DY_FRE {fre_total / cap:.3f} DY_DVA {dva / cap:.3f}")
+    for k, n in sorted(tally.items()):
+        out(f"{k[0]:14} {k[1]:22} {n}")
+        for e in examples.get(k, []):
+            out("      " + e)
+
+    section("Outliers: crescimento persistente ou pico isolado?")
+    rows = q(
+        conn,
+        """SELECT o.cvm_code, o.reference_date, o.total, o.ratio,
+                  (SELECT coalesce(b.fre_jcp + b.fre_dividends, b.jcp + b.dividends) FROM indicator_annual b
+                   WHERE b.cvm_code = o.cvm_code AND b.reference_date = (o.reference_date + interval '1 year')::date LIMIT 1)
+           FROM dividend_outlier o""",
+    )
+    n = len(rows)
+    persistent = sum(1 for _, _, tot, _, nxt in rows if nxt is not None and float(nxt) >= 0.7 * float(tot))
+    isolated = sum(1 for _, _, tot, _, nxt in rows if nxt is not None and float(nxt) < 0.7 * float(tot))
+    last = sum(1 for *_, nxt in rows if nxt is None)
+    out(f"{n} outliers: o ano seguinte mantém >= 70% do valor (nível novo): {persistent}; cai abaixo disso (pico): {isolated}; sem ano seguinte: {last}")
+    by_ratio = Counter("<3" if float(r) < 3 else "3-10" if float(r) < 10 else "10-100" if float(r) < 100 else ">100" for *_, r, _ in rows)
+    out(f"razão sobre a mediana: {dict(by_ratio)}")
+    per_company = Counter(c for c, *_ in rows)
+    out(f"empresas com algum outlier: {len(per_company)}; com 3 ou mais: {sum(1 for v in per_company.values() if v >= 3)}")
+
+    section("Universo: empresas avaliadas hoje sem papel negociado (liquidez indisponível)")
+    rows = q(
+        conn,
+        """SELECT c.cvm_code, c.name, c.category, c.cvm_sector, a.equity FROM screen_criterion sc
+           JOIN screen_result r ON r.cvm_code = sc.cvm_code AND r.as_of = sc.as_of
+           JOIN company c ON c.cvm_code = sc.cvm_code
+           LEFT JOIN LATERAL (SELECT equity FROM indicator_annual i WHERE i.cvm_code = c.cvm_code
+                              ORDER BY reference_date DESC LIMIT 1) a ON true
+           WHERE sc.as_of = %s AND sc.criterion = 'liquidez' AND sc.status = 'unavailable' AND r.status <> 'stale'
+           ORDER BY a.equity DESC NULLS LAST""",
+        (today,),
+    )
+    out(f"{len(rows)} empresas; por categoria: {dict(Counter(r[2] for r in rows))}")
+    out("maiores por patrimônio (as listadas de verdade aparecem aqui e precisam de ticker):")
+    for cvm, name, cat, sec, eq in rows[:25]:
+        out(f"   {cvm:>6} {name[:44]:44} {str(cat)[:12]:12} PL {float(eq or 0) / 1e9:9,.1f} bi  {str(sec)[:30]}")
+
+    section("Papéis do COTAHIST sem empresa mapeada: total e sugestões por nome (a confirmar)")
+    _, _, unmapped = compute._company_securities(conn)
+    out(f"{len(unmapped)} papéis sem empresa de {sum(len(v) for v in by_company.values()) + len(unmapped)}")
+    shorts = dict(q(conn, "SELECT ticker, short_name FROM security"))
+    comp = q(conn, "SELECT cvm_code, name, trade_name FROM company")
+    labels = {}
+    for cvm, nm, tn in comp:
+        for lab in (nm, tn):
+            if lab:
+                labels[lab.upper()] = cvm
+    for tk, vol in sorted(unmapped, key=lambda x: -x[1])[:25]:
+        short = (shorts.get(tk) or "").upper()
+        best = difflib.get_close_matches(short, list(labels), n=2, cutoff=0.3)
+        out(f"   {tk:8} {vol / 1e9:8.1f} bi  '{short}' -> " + " | ".join(f"{b[:30]} ({labels[b]})" for b in best))
+
+    section("Patrimônio indisponível (2020+): motivo e contas de balanço presentes")
+    out(str(dict(q(conn, "SELECT notes->>'equity', count(*) FROM indicator_annual WHERE equity IS NULL AND reference_date >= '2020-01-01' GROUP BY 1"))))
+    for cvm in (1023,):
+        for fid, ref in q(conn, "SELECT id, reference_date FROM filing WHERE doc_type='DFP' AND cvm_code=%s AND reference_date='2025-12-31' AND has_lines", (cvm,)):
+            codes = q(conn, "SELECT account_code, value FROM financial_line WHERE filing_id=%s AND statement='BPP' ORDER BY 1", (fid,))
+            out(f"   {names[cvm]} {ref}: BPP guardado: " + ", ".join(f"{c}={float(v) / 1e6:,.0f}" for c, v in codes))
+
+    section("Proventos: líquidas cujo FRE (até 2021) tem valor e a DVA recente é zero (tipo Vale/Gerdau)")
+    rows = q(
+        conn,
+        """SELECT a.cvm_code, bool_and(coalesce(a.jcp + a.dividends, 0) = 0) FILTER (WHERE a.reference_date >= '2022-01-01'),
+                  max(coalesce(a.fre_jcp + a.fre_dividends, 0)) FILTER (WHERE a.reference_date <= '2021-12-31')
+           FROM indicator_annual a JOIN screen_criterion c ON c.cvm_code = a.cvm_code AND c.as_of = %s
+                AND c.criterion = 'liquidez' AND c.status = 'pass'
+           GROUP BY 1""",
+        (today,),
+    )
+    hit = [(c, mx) for c, zero, mx in rows if zero and mx and mx > 0]
+    out(f"{len(hit)} de {len(rows)} líquidas: " + ", ".join(names[c][:22] for c, _ in hit[:20]))
 
 
 def fre_report(conn, cfg, today):
