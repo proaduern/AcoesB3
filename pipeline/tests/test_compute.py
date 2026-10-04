@@ -790,7 +790,7 @@ def test_dva_zerada_depois_do_fre_fica_indisponivel_e_vai_para_a_lista_manual(co
 def test_prioridade_inclui_empresa_da_lista_em_qualquer_status(conn):
     World(conn).company(1, "ABCD", dividends=burst)
     run(conn)
-    # sem payout pendente por outlier e com a queda do DPS indisponível: só entra se estiver na lista
+    # queda do DPS indisponível e nenhum payout pendente por outlier: só entra se estiver na lista
     conn.execute("UPDATE screen_result SET status = 'insufficient_data' WHERE cvm_code = 1")
     conn.execute(
         "UPDATE screen_criterion SET status = 'pass' WHERE cvm_code = 1 AND criterion = 'liquidez'"
