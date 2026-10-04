@@ -45,7 +45,7 @@ Duas séries de preço:
 - pagos em 10 de 10 anos;
 - DY médio líquido de 5 anos > 5%;
 - payout entre 25% e 100%;
-- dividendo por ação caiu em no máximo 4 dos últimos 10 anos (decidido em 04/10/2026; antes 3, `screen.dps_max_drop_years`).
+- dividendo por ação caiu em no máximo 4 dos últimos 10 anos, medido pela **média móvel de 3 anos** (a média do DPS dos 3 anos até k contra a média móvel do ano anterior; até 7 comparações na janela). Decidido em 04/10/2026; antes: ano contra ano, no máximo 3 (`screen.dps_method`, `screen.dps_max_drop_years`).
 
 **DY líquido**: alíquotas configuráveis (JCP 15%, dividendo 0%).
 
@@ -73,7 +73,7 @@ Decididas pelo usuário:
 - **DY**: dividendo total do ano ÷ valor de mercado (fechamento do último pregão do exercício × ações do FRE por classe). Com o FRE, o DY existe desde 2010 (antes de adotar o FRE era indisponível antes de 2020).
 - **Eventos societários**: fator oficial do FRE (ações depois ÷ antes; desdobramento, grupamento, bonificação), com data de efeito dada pelo salto de preço do COTAHIST que casa com o evento (até 200 dias depois da aprovação, fator dentro de 8%); sem salto, vale a data de aprovação. Eventos só do COTAHIST valem depois do que o FRE cobre (se automáticos ou confirmados) ou se informados à mão; os suspeitos esperam revisão. Um salto de preço suspeito (fora do FRE) vira automático se a contagem de ações de dois retratos consecutivos do FRE cresceu pelo mesmo fator (`events.snapshot_tolerance`): cobre os anos do FRE sem arquivo de desdobramentos (caso Engie, bonificação de 40% em 27/11/2025). Retrato de FRE entregue perto do evento: compara-se a contagem do retrato com o antes/depois do evento para saber se já a inclui.
 - **Valor de mercado e troca de ticker**: cada classe usa o papel mais negociado que tiver preço na data (a ISA trocou TRPL por ISAE em 11/2024).
-- **Queda do DPS, método alternativo (só informativo)**: o detalhe do critério traz também as quedas pela média móvel de 3 anos (`screen.dps_alt_avg_years`), sem decidir o status. Em 04/10/2026, com ele, Engie e Taesa teriam 3 quedas cada e passariam no limite de 4. A troca de método depende de decisão do usuário.
+- **Queda do DPS**: método `avg` (média móvel de `screen.dps_alt_avg_years` = 3 anos) decide o status; o ano contra ano (`yearly`) fica no detalhe do critério, só informativo. `screen.dps_method = yearly` restaura o método anterior. Em 04/10/2026, com `avg` e limite 4, Engie e Taesa têm 3 quedas cada e passam.
 - **Dados desatualizados**: empresa cuja última DFP tem mais de 730 dias em relação à data-base (`screen.max_data_age_days`) fica `stale` e não é avaliada. Aprovado pelo usuário em 04/10/2026.
 
 Adotadas por padrão (corrigir se discordar; todas configuráveis):

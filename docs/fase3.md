@@ -55,5 +55,5 @@ do Graham, janelas, K por nº de métodos, faixas 80/100/120%), módulo `pipelin
 
 - Revisar os outliers que mudam resultado (`review list --priority`): 18 em 04/10/2026 (Itaú 2019, Bradesco 2018, CPFL 2021 entre
   as aprovadas) e os eventos suspeitos (633) só das empresas da lista.
-- Decidir o método do critério de queda do DPS (ano contra ano, hoje, ou média de 3 anos).
+- Critério de queda do DPS: decidido em 04/10/2026, média móvel de 3 anos (limite 4 de até 7 comparações).
 - Caixa Seguridade (abriu capital em 2021) e BB Seguridade (proventos de todos os anos indisponível) ficam com dado insuficiente.
