@@ -44,7 +44,8 @@ Rodada de 03-04/10/2026: carga completa (cadastro, FCA, DFP, COTAHIST) + `comput
 1. Primeira vez (feita em 04/10/2026): Actions → `compute` com `reload_dfp` e `load_fre` marcados (a recarga
    das DFP grava as contas de DVA de banco/seguradora e as descrições das contas; o FRE traz ações, eventos e
    proventos). Depois, `compute` sem as opções.
-2. Revisar: `acoesb3 review list`; decidir com `review outlier` e `review event`; rodar `compute` de novo.
+2. Revisar: `acoesb3 review list --priority` (outliers que mudam um resultado, com DVA × FRE do ano) e depois
+   `acoesb3 review list`; decidir com `review outlier` e `review event`; rodar `compute` de novo.
 3. Informar `screen.excluded_sectors` e, se preciso, `review class`/`review ticker`.
 
 ## Decisões de 04/10/2026 (segunda leva)

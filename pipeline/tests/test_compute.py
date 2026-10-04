@@ -439,6 +439,30 @@ def test_outlier_pendente_fica_fora_e_usuario_pode_liberar(conn):
         review.decide_outlier(conn, 1, date(2020, 12, 31), "include", None)
 
 
+def test_prioridade_so_lista_outlier_que_muda_resultado(conn):
+    World(conn).company(1, "ABCD", dividends=burst)
+    run(conn)
+    # liquidez não aprovada: fora da lista; aprovada: entra
+    conn.execute("UPDATE screen_criterion SET status = 'fail' WHERE criterion = 'liquidez'")
+    assert review.priority(conn) == []
+    conn.execute("UPDATE screen_criterion SET status = 'pass' WHERE criterion = 'liquidez'")
+    rows = review.priority(conn)
+    assert [(r[0], r[2], r[3]) for r in rows] == [(1, date(2023, 12, 31), D(500))]
+    assert rows[0][9] == "só DVA"  # o cenário não tem FRE
+    # com decisão deixa de ser prioridade
+    review.decide_outlier(conn, 1, date(2023, 12, 31), "exclude", None)
+    assert review.priority(conn) == []
+
+
+def test_conferencia_das_fontes():
+    assert review.source_check(D(100), D(100)) == "concordam"
+    assert review.source_check(D(100), D(100000)) == "divergem"
+    assert review.source_check(None, D(5)) == "só FRE"
+    assert review.source_check(D(5), None) == "só DVA"
+    assert review.source_check(None, None) == "sem fonte"
+    assert review.source_check(D(0), D(0)) == "divergem"
+
+
 def no_dva(y):  # a DVA zerada (caso Vale/Gerdau do diagnóstico)
     return (D(0), D(0))
 

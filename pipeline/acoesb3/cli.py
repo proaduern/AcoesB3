@@ -156,7 +156,19 @@ def cmd_compute(conn, a) -> None:
 
 def cmd_review(conn, a) -> None:
     r = a.review_cmd
-    if r == "list":
+    if r == "list" and a.priority:
+        rows = review.priority(conn)
+        print(
+            f"{len(rows)} outliers sem decisão que mudam um resultado (aprovadas primeiro, depois"
+            " por volume negociado):"
+        )
+        for cvm, name, ref, total, med, ratio, dva, fre, st, check in rows[: a.limit]:
+            fmt = lambda v: "-" if v is None else f"{v:,.0f}"  # noqa: E731
+            print(
+                f"  {cvm:>6} {name[:30]:30} {ref} [{st}] total={fmt(total)} mediana={fmt(med)}"
+                f" x{ratio:.1f} | DVA={fmt(dva)} FRE={fmt(fre)} -> {check}: {review.HINTS[check]}"
+            )
+    elif r == "list":
         p = review.pending(conn)
         print("Proventos suspeitos (sem decisão ficam FORA do histórico):")
         for cvm, name, ref, total, med, ratio, dec in p["outliers"][: a.limit]:
@@ -217,6 +229,11 @@ def main(argv: list[str] | None = None) -> int:
     rs = rv.add_subparsers(dest="review_cmd", required=True)
     rl = rs.add_parser("list")
     rl.add_argument("--limit", type=int, default=100, help="linhas por seção")
+    rl.add_argument(
+        "--priority",
+        action="store_true",
+        help="só os outliers que mudam um resultado (empresas líquidas aprovadas ou sem payout/DY)",
+    )
     x = rs.add_parser("outlier")
     x.add_argument("--cvm", type=int, required=True)
     x.add_argument("--date", type=date.fromisoformat, required=True, help="data-base da DFP")
