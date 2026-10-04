@@ -13,6 +13,14 @@ on:
         description: "Carregar o FRE (ações, desdobramentos e proventos) antes de calcular (~3 min)"
         type: boolean
         default: false
+      skip_compute:
+        description: "Não calcular: só imprimir as pendências de revisão (rápido)"
+        type: boolean
+        default: false
+      priority_only:
+        description: "Pendências: só os outliers que mudam um resultado (review list --priority)"
+        type: boolean
+        default: false
       step:
         description: "Etapa (vazio = todas): annual, outliers, events ou screens"
         required: false
@@ -45,10 +53,18 @@ jobs:
         if: ${{ inputs.load_fre }}
         run: acoesb3 cvm --doc FRE
       - name: Calcula
+        if: ${{ !inputs.skip_compute }}
         run: |
           args=()
           [ -n "$STEP" ] && args+=(--step "$STEP")
           acoesb3 compute "${args[@]}"
       - name: Pendências de revisão
-        run: acoesb3 review list
+        env:
+          PRIORITY_ONLY: ${{ inputs.priority_only }}
+        run: |
+          if [ "$PRIORITY_ONLY" = "true" ]; then
+            acoesb3 review list --priority --limit 300
+          else
+            acoesb3 review list
+          fi
       - run: acoesb3 size
