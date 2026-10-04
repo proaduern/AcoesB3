@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from test_load import FakeResponse, make_zip
 
-from acoesb3 import compute, http, load, review
+from acoesb3 import compute, http, load, review, watch
 
 D = Decimal
 TODAY = date(2026, 6, 30)
@@ -463,6 +463,27 @@ def test_conferencia_das_fontes():
     assert review.source_check(D(0), D(0)) == "divergem"
     assert review.source_check(D(0), D(1500)) == "DVA zerada"
     assert review.source_check(D(100), D(0)) == "divergem"
+
+
+def test_lista_acompanhada_e_candidatas_ao_radar(conn):
+    world = World(conn)
+    world.company(1, "ABCD", sector="Energia Elétrica")
+    world.company(2, "EFGH", sector="Energia Elétrica")
+    world.company(3, "IJKL", sector="Bancos")
+    run(conn)
+    assert [r[0] for r in watch.find(conn, "EMPRESA 2")] == [2]
+    watch.add(conn, 1, "carteira", "energia", "já tenho")
+    assert [(r[0], r[2]) for r in watch.listing(conn)] == [("carteira", 1)]
+    cand = watch.candidates(conn)
+    assert [r[0] for r in cand["energia"]] == [2]  # a da lista não é candidata
+    assert [r[0] for r in cand["bancos"]] == [3]
+    assert cand["telecom"] == []
+    with pytest.raises(ValueError):
+        watch.add(conn, 1, "outro", "energia", None)
+    with pytest.raises(ValueError):
+        watch.add(conn, 999, "radar", "energia", None)
+    watch.remove(conn, 1)
+    assert watch.listing(conn) == []
 
 
 def no_dva(y):  # a DVA zerada (caso Vale/Gerdau do diagnóstico)

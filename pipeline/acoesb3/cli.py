@@ -20,7 +20,7 @@ from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
-from . import compute, load, review
+from . import compute, load, review, watch
 from .db import connect, get_config, migrate
 
 log = logging.getLogger("acoesb3")
@@ -200,6 +200,32 @@ def cmd_review(conn, a) -> None:
         review.set_ticker_root(conn, a.root, a.cvm, a.note)
 
 
+def cmd_watch(conn, a) -> None:
+    w = a.watch_cmd
+    if w == "find":
+        for text in a.name:
+            print(f"== {text}")
+            for cvm, name, st, sector, screen, as_of in watch.find(conn, text):
+                print(
+                    f"  {cvm:>6} {name[:44]:44} CVM={st} setor={sector} filtro={screen} ({as_of})"
+                )
+    elif w == "add":
+        watch.add(conn, a.cvm, a.role, a.segment, a.note)
+    elif w == "remove":
+        watch.remove(conn, a.cvm)
+    elif w == "list":
+        for role, seg, cvm, name, st in watch.listing(conn):
+            print(f"  {role:8} {seg:12} {cvm:>6} {name[:44]:44} filtro={st}")
+    elif w == "candidates":
+        for seg, rows in watch.candidates(conn, a.per_segment).items():
+            print(f"== {seg}")
+            for cvm, name, _sector, st, vol, issues, fails in rows:
+                print(
+                    f"  {cvm:>6} {name[:40]:40} {st:20} volume={vol or 0:,.0f}"
+                    f" reprovados={fails} {issues}"
+                )
+
+
 def cmd_size(conn, a) -> None:
     report = load.size_report(conn)
     mb = report["database_bytes"] / 1024 / 1024
@@ -225,6 +251,20 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("size")
     cp = sub.add_parser("compute", help="indicadores, outliers, eventos e filtro (fase 2)")
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
+    wt = sub.add_parser("watch", help="lista de empresas acompanhadas (carteira e radar)")
+    ws = wt.add_subparsers(dest="watch_cmd", required=True)
+    x = ws.add_parser("find", help="procura empresas pelo nome")
+    x.add_argument("--name", action="append", required=True)
+    x = ws.add_parser("add")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--role", choices=watch.ROLES, required=True)
+    x.add_argument("--segment", required=True)
+    x.add_argument("--note")
+    x = ws.add_parser("remove")
+    x.add_argument("--cvm", type=int, required=True)
+    ws.add_parser("list")
+    x = ws.add_parser("candidates", help="candidatas ao radar por segmento, a partir do filtro")
+    x.add_argument("--per-segment", type=int, default=6)
     rv = sub.add_parser("review", help="revisão manual (outliers, eventos, correções)")
     rs = rv.add_subparsers(dest="review_cmd", required=True)
     rl = rs.add_parser("list")
@@ -286,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_compute(conn, a)
         elif a.cmd == "review":
             cmd_review(conn, a)
+        elif a.cmd == "watch":
+            cmd_watch(conn, a)
     return 0
 
 

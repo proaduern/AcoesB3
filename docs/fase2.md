@@ -3,7 +3,7 @@
 **Estado (04/10/2026)**: código e testes prontos (172 testes, lint limpo); PRs #3 e #4 mergeados. A medição
 em Postgres descartável e a execução no Neon (`compute` com recarga das DFP e carga do FRE) foram feitas e os
 workflows temporários foram removidos. Pendente: revisão manual (295 outliers, eventos suspeitos, proventos a
-lançar à mão) e `screen.excluded_sectors`.
+lançar à mão) das empresas da lista acompanhada (`acoesb3 watch`).
 
 ## O que a primeira medição com dados reais mostrou
 
@@ -46,7 +46,7 @@ Rodada de 03-04/10/2026: carga completa (cadastro, FCA, DFP, COTAHIST) + `comput
    proventos). Depois, `compute` sem as opções.
 2. Revisar: `acoesb3 review list --priority` (outliers que mudam um resultado, com DVA × FRE do ano) e depois
    `acoesb3 review list`; decidir com `review outlier` e `review event`; rodar `compute` de novo.
-3. Informar `screen.excluded_sectors` e, se preciso, `review class`/`review ticker`.
+3. Montar a lista acompanhada (`acoesb3 watch find|add|candidates`) e, se preciso, `review class`/`review ticker`.
 
 ## Decisões de 04/10/2026 (segunda leva)
 
@@ -59,7 +59,7 @@ exige `reload_dfp`). Ver seção 4.1 da especificação.
 | Item | Motivo |
 |---|---|
 | Validação no Neon | Aguarda a revisão do resultado da medição no Postgres descartável |
-| Lista de segmentos excluídos | O usuário ainda não informou; `screen.excluded_sectors` está vazio |
+| Lista de segmentos excluídos | Substituída pela lista acompanhada (carteira + radar), decisão de 04/10/2026 |
 | Proventos dos exercícios mais recentes pelo FRE | O layout 2025+ não traz o arquivo; ficam com a DVA ou o valor manual |
 | Tesouraria nas ações | O FRE não traz; diferença estimada de ~1% |
 | Retratos antes de 2020 | A janela de 10 anos só fecha em 2020 (`screen.snapshot_first_year`); a fase 4 precisa de janelas menores configuradas |

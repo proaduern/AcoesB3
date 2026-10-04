@@ -29,8 +29,9 @@ Duas séries de preço:
 
 ## 3. Universo
 
-- **Filtro**: B3 inteira, menos os segmentos excluídos pelo usuário.
-- **Acompanhamento detalhado** (DCF, release, alertas): lista do usuário.
+- **Filtro**: calculado para a B3 inteira (o backtest precisa de empresas canceladas, sem viés de sobrevivência). Decidido em 04/10/2026: o universo de trabalho é só a **lista acompanhada** (`watchlist`): a **carteira** do usuário e o **radar** (2 a 3 candidatas por segmento da carteira, escolhidas a partir do filtro). Revisão manual, preço teto, DCF, alertas e releases valem só para a lista. `screen.excluded_sectors` perdeu o sentido e fica vazio.
+- **Carteira inicial** (04/10/2026): Banco do Brasil, Itaú Unibanco (ITUB4/ITUB3), BB Seguridade, Caixa Seguridade, Porto Seguro, Alupar, Engie, ISA Energia, Sanepar, Copasa, Vivo (Telefônica Brasil). **Segmentos do radar**: bancos, seguradoras, energia (geração e transmissão), saneamento e telecom (`watch.segments`).
+- **Acompanhamento detalhado** (DCF, release, alertas): a lista acompanhada; o DCF vale para quem o usuário indicar dentro dela.
 - **Classes**: uma linha por empresa no filtro e preço teto por classe. Units calculadas pela composição (ex.: TAEE11 = 1 ON + 2 PN).
 - **Liquidez**: volume médio diário ≥ R$ 1 mi e presença em ≥ 90% dos pregões (últimos 3 meses).
 
@@ -60,7 +61,7 @@ Duas séries de preço:
 Decididas pelo usuário:
 - **Proventos**, por exercício, nesta ordem: valor informado à mão ou por outra fonte (`dividend_override`) > **FRE** (distribuição de dividendos por classe de ação: valor e data de pagamento; soma de todas as classes, JCP à parte) > DVA da DFP (total declarado no exercício, sem data de pagamento). Cada ano guarda a fonte. O FRE de 2025 em diante não traz mais esse arquivo (layout novo), então os exercícios mais recentes dependem da DVA ou do valor manual. Aprovado pelo usuário em 04/10/2026.
 - **Menos de 10 anos de DFP**: não reprova; fica como **histórico insuficiente**, separado de quem reprovou num critério.
-- **Setor**: setor declarado à CVM, com reclassificação manual por empresa (`company_class_override`). Segmentos excluídos: `screen.excluded_sectors` (hoje vazio: o usuário ainda não informou a lista).
+- **Setor**: setor declarado à CVM, com reclassificação manual por empresa (`company_class_override`). `screen.excluded_sectors` não é mais usado (ver seção 3).
 - **Retratos**: o cálculo recebe uma data-base e só usa DFP já entregues nela (`filing_available`). Grava o retrato de hoje e um por fim de ano a partir de `screen.snapshot_first_year` (2020: antes disso a janela de 10 anos não fecha, pois a DFP estruturada começa em 2010).
 - **Queda do dividendo por ação**: por ação de verdade, com ajuste por desdobramento/grupamento/bonificação (ver eventos abaixo).
 - **Payout**: média de 5 anos dentro da faixa (não ano a ano).
