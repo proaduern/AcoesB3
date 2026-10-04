@@ -148,6 +148,27 @@ def dedupe_fre(events: list[FreEvent], days: int, tolerance: Decimal) -> list[Fr
     return out
 
 
+_STATUS_RANK = {"manual": 3, "confirmed": 2, "auto": 1, "suspected": 0}
+
+
+def dedupe_price(events: list[PriceEvent], days: int = 3, tolerance: Decimal = Decimal("0.03")):
+    """Os papéis de uma empresa (ON, PN, units) saltam juntos: o mesmo evento aparece uma vez
+    por papel. Mesmo fator (até ``tolerance``) e datas a até ``days`` dias: um só, com o status
+    mais forte (manual > confirmado > automático > suspeito)."""
+    out: list[PriceEvent] = []
+    for e in sorted(events, key=lambda x: (x.event_date, x.factor)):
+        for i, kept in enumerate(out):
+            if abs((e.event_date - kept.event_date).days) <= days and (
+                abs(e.factor / kept.factor - 1) <= tolerance
+            ):
+                if _STATUS_RANK[e.status] > _STATUS_RANK[kept.status]:
+                    out[i] = replace(e, event_date=kept.event_date, factor=kept.factor)
+                break
+        else:
+            out.append(e)
+    return out
+
+
 def merge_events(
     fre_events: list[FreEvent],
     price_events: list[PriceEvent],
@@ -164,6 +185,7 @@ def merge_events(
     posterior ao que o FRE cobre (``coverage_end``; sem cobertura, entra). Devolve também os
     eventos do COTAHIST descartados por divergirem do FRE, para revisão.
     """
+    price_events = dedupe_price(price_events)
     unique = dedupe_fre(fre_events, dedupe_days, Decimal("0.005"))
     used: set[int] = set()
     out: list[CompanyEvent] = []

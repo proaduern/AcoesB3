@@ -208,3 +208,31 @@ def test_eventos_iguais_muito_distantes_no_tempo_sao_distintos():
     a = FE(date(2012, 10, 16), D(2), K, "Desdobramento")
     b = FE(date(2016, 3, 1), D(2), K, "Desdobramento")
     assert len(merge([a, b], [])[0]) == 2
+
+
+# --- Saltos de preço repetidos nos papéis da mesma empresa -----------------------------
+
+
+def test_o_mesmo_salto_em_on_pn_e_unit_conta_uma_vez_com_o_status_mais_forte():
+    # Falha real do Actions: UniqueViolation (cvm 3069, 24/01/2024, fator 4)
+    on = PE(date(2024, 1, 24), D(4), "suspected")
+    pn = PE(date(2024, 1, 24), D(4), "auto")
+    unit = PE(date(2024, 1, 25), D("4.02"), "suspected")
+    got = corporate.dedupe_price([on, pn, unit])
+    assert [(e.event_date, e.status) for e in got] == [(date(2024, 1, 24), "auto")]
+    events, _ = merge([], [on, pn, unit], coverage=None)
+    assert len(events) == 1 and events[0].source == "cotahist"
+
+
+def test_saltos_distintos_da_mesma_empresa_ficam():
+    a = PE(date(2024, 1, 24), D(4), "auto")
+    b = PE(date(2024, 1, 24), D(2), "auto")  # fator diferente no mesmo dia
+    c = PE(date(2025, 1, 24), D(4), "auto")  # mesmo fator, um ano depois
+    assert len(corporate.dedupe_price([a, b, c])) == 3
+
+
+def test_salto_duplicado_nao_vira_evento_extra_ao_casar_com_o_fre():
+    fre = [FE(date(2024, 1, 5), D(4), K, "Desdobramento")]
+    price = [PE(date(2024, 1, 24), D(4), "auto"), PE(date(2024, 1, 24), D(4), "auto")]
+    events, dropped = merge(fre, price, coverage=date(2024, 12, 1))
+    assert len(events) == 1 and dropped == [] and events[0].date_basis == "cotahist"

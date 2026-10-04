@@ -56,10 +56,13 @@ jobs:
       - name: Compute
         run: acoesb3 compute
       - name: Relatório
+        if: ${{ !cancelled() }}
         run: python scripts/trial_report.py
       - name: Pendências de revisão
+        if: ${{ !cancelled() }}
         run: acoesb3 review list --limit 60
-      - run: acoesb3 size
+      - if: ${{ !cancelled() }}
+        run: acoesb3 size
 
   neon:
     needs: trial
