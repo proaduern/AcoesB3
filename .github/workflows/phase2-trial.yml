@@ -43,16 +43,47 @@ jobs:
       - name: Sonda (FRE e descrição das contas)
         continue-on-error: true
         run: python scripts/probe_phase2.py
+      # A carga completa leva ~15 min; os dados brutos ficam em cache enquanto o código das
+      # cargas e o esquema delas não mudar (o compute roda sempre, sobre dados restaurados).
+      - name: Restaura a carga do cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: trial-data.sql.gz
+          key: trial-data-v1-${{ hashFiles('pipeline/acoesb3/cvm.py', 'pipeline/acoesb3/cotahist.py', 'pipeline/acoesb3/fre.py', 'pipeline/acoesb3/load.py', 'pipeline/acoesb3/http.py', 'pipeline/migrations/0001_base.sql', 'pipeline/migrations/0002_cvm_b3.sql') }}
+      - name: Esquema
+        run: acoesb3 migrate
+      - name: Carga restaurada
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: gunzip -c trial-data.sql.gz | psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -q
       - name: Carga - cadastro e FCA
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           time acoesb3 cad
           time acoesb3 cvm --doc FCA
       - name: Carga - DFP
+        if: steps.cache.outputs.cache-hit != 'true'
         run: time acoesb3 cvm --doc DFP
       - name: Carga - FRE
+        if: steps.cache.outputs.cache-hit != 'true'
         run: time acoesb3 cvm --doc FRE
       - name: Carga - COTAHIST
+        if: steps.cache.outputs.cache-hit != 'true'
         run: time acoesb3 cotahist
+      - name: Guarda a carga no cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          pg_dump "$NEON_DATABASE_URL" --data-only --disable-triggers \
+            -t company -t source_file -t filing -t financial_line -t share_count \
+            -t security -t quote_daily -t company_security -t fre_capital -t fre_split \
+            -t fre_dividend -t collection_run | gzip > trial-data.sql.gz
+          ls -l trial-data.sql.gz
+      - name: Salva no cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: trial-data.sql.gz
+          key: ${{ steps.cache.outputs.cache-primary-key }}
       - name: Compute
         run: acoesb3 compute
       - name: Relatório

@@ -572,3 +572,13 @@ def test_dois_eventos_do_fre_na_mesma_data_nao_quebram_a_gravacao(conn):
     rows = conn.execute("SELECT factor FROM company_event ORDER BY factor").fetchall()
     assert rows == [(D("1.1"),), (D(2),)]
     assert out["snapshots"]
+
+
+def test_resumo_da_etapa_aceita_datas_e_decimais(conn):
+    # Falha real do Actions: o resumo do compute tinha objetos date e quebrou o INSERT em JSON.
+    from acoesb3 import cli
+
+    detail = cli._run(conn, "teste", lambda: {"quando": date(2020, 1, 2), "valor": D("1.5")})
+    assert detail["quando"] == date(2020, 1, 2)
+    saved = conn.execute("SELECT status, detail FROM collection_run WHERE job = 'teste'").fetchone()
+    assert saved == ("ok", {"quando": "2020-01-02", "valor": "1.5"})

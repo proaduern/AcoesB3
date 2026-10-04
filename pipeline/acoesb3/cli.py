@@ -26,6 +26,10 @@ from .db import connect, get_config, migrate
 log = logging.getLogger("acoesb3")
 
 
+def _dumps(obj) -> str:
+    return json.dumps(obj, default=str, ensure_ascii=False)
+
+
 def _run(conn, job: str, fn):
     run_id = conn.execute(
         "INSERT INTO collection_run (job) VALUES (%s) RETURNING id", (job,)
@@ -38,13 +42,13 @@ def _run(conn, job: str, fn):
         conn.execute(
             "UPDATE collection_run SET status = 'failed', finished_at = now(), detail = %s"
             " WHERE id = %s",
-            (Jsonb({"error": repr(e)}), run_id),
+            (Jsonb({"error": repr(e)}, dumps=_dumps), run_id),
         )
         conn.commit()
         raise
     conn.execute(
         "UPDATE collection_run SET status = 'ok', finished_at = now(), detail = %s WHERE id = %s",
-        (Jsonb(detail), run_id),
+        (Jsonb(detail, dumps=_dumps), run_id),
     )
     conn.commit()
     log.info("%s: %s", job, json.dumps(detail, default=str, ensure_ascii=False))

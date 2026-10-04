@@ -412,7 +412,7 @@ def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
             )  # fmt: skip
             for e in merged
         ]
-        dropped += [(cvm, e.event_date, float(e.factor)) for e in drop]
+        dropped += [(cvm, e.event_date.isoformat(), float(e.factor)) for e in drop]
     with conn.cursor() as cur:
         cur.execute("DELETE FROM company_event")
         cur.executemany(
