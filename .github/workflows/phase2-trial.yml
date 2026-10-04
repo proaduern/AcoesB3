@@ -56,7 +56,7 @@ jobs:
       - name: Relatório
         run: python scripts/trial_report.py
       - name: Pendências de revisão
-        run: acoesb3 review list | head -150
+        run: acoesb3 review list --limit 60
       - run: acoesb3 size
 
   neon:
@@ -84,5 +84,5 @@ jobs:
       - name: Relatório
         run: python scripts/trial_report.py
       - name: Pendências de revisão
-        run: acoesb3 review list | head -150
+        run: acoesb3 review list --limit 60
       - run: acoesb3 size

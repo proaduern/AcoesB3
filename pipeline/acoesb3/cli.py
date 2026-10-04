@@ -152,13 +152,13 @@ def cmd_review(conn, a) -> None:
     if r == "list":
         p = review.pending(conn)
         print("Proventos suspeitos (sem decisão ficam FORA do histórico):")
-        for cvm, name, ref, total, med, ratio, dec in p["outliers"]:
+        for cvm, name, ref, total, med, ratio, dec in p["outliers"][: a.limit]:
             print(
                 f"  {cvm:>6} {name[:32]:32} {ref} total={total:,.0f} mediana={med:,.0f}"
                 f" x{ratio:.1f} -> {dec or 'pendente'}"
             )
         print("Eventos societários detectados (suspected só vale depois de confirmar):")
-        for eid, tk, d, f, ratio, dis, st in p["events"]:
+        for eid, tk, d, f, ratio, dis, st in p["events"][: a.limit]:
             print(f"  id={eid:<6} {tk:8} {d} fator={f} razão={ratio} DISMES mudou={dis} -> {st}")
     elif r == "outlier":
         review.decide_outlier(conn, a.cvm, a.date, a.decision, a.note)
@@ -205,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
     rv = sub.add_parser("review", help="revisão manual (outliers, eventos, correções)")
     rs = rv.add_subparsers(dest="review_cmd", required=True)
-    rs.add_parser("list")
+    rl = rs.add_parser("list")
+    rl.add_argument("--limit", type=int, default=100, help="linhas por seção")
     x = rs.add_parser("outlier")
     x.add_argument("--cvm", type=int, required=True)
     x.add_argument("--date", type=date.fromisoformat, required=True, help="data-base da DFP")

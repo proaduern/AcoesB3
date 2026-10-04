@@ -167,12 +167,91 @@ def main():
     out(f"{len(by_company)} empresas com papel; raízes ambíguas: {len(ambiguous)} {dict(list(ambiguous.items())[:10])}")
     out("papéis sem empresa (maior volume): " + ", ".join(f"{t} ({v / 1e9:.1f} bi)" for t, v in sorted(unmapped, key=lambda x: -x[1])[:15]))
 
+    diagnostics(conn, today)
     sensitivity(conn, cfg, today, by_company)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as f:
             f.write("```\n" + "\n".join(LINES)[:900_000] + "\n```\n")
+
+
+def diagnostics(conn, today):
+    names = dict(q(conn, "SELECT cvm_code, name FROM company"))
+
+    section("Diagnóstico: DFP sem plano de contas (2022+): escopo e contas de lucro presentes")
+    combos = Counter()
+    for fid, cons, codes, dre in q(
+        conn,
+        """SELECT f.id, bool_or(fl.consolidated),
+                  array_agg(DISTINCT fl.account_code) FILTER (WHERE fl.statement = 'DRE' AND fl.account_code IN
+                      ('3.09','3.11','3.13','3.09.01','3.11.01','3.13.01')),
+                  count(*) FILTER (WHERE fl.statement = 'DRE')
+           FROM indicator_annual a JOIN filing f ON f.id = a.filing_id
+           LEFT JOIN financial_line fl ON fl.filing_id = f.id AND fl.period_end = f.reference_date
+           WHERE a.plan IS NULL AND a.reference_date >= '2022-01-01' GROUP BY f.id""",
+    ):
+        combos[(cons, tuple(sorted(codes or [])), dre > 0)] += 1
+    for (cons, codes, has_dre), n in combos.most_common(12):
+        out(f"{n:>5}  consolidada={cons} DRE_presente={has_dre} contas={list(codes)}")
+
+    section("Diagnóstico: fatos anuais de empresas conhecidas (R$ milhões; ações em milhões)")
+    for cvm in (1023, 19348, 9512, 4170, 23264, 17329, 5410, 20257, 11258, 8036):
+        out(f"-- {names.get(cvm, cvm)} ({cvm})")
+        for ref, plan, pr, eq, jcp, div, src, lpa_on, lpa_pn, s_on, s_pn, notes in q(
+            conn,
+            """SELECT reference_date, plan, profit/1e6, equity/1e6, jcp/1e6, dividends/1e6, dividends_source,
+                      lpa_on, lpa_pn, shares_on/1e6, shares_pn/1e6, notes::text
+               FROM indicator_annual WHERE cvm_code = %s AND reference_date >= '2018-01-01' ORDER BY 1""",
+            (cvm,),
+        ):
+            f = lambda v: "-" if v is None else f"{float(v):,.1f}"  # noqa: E731
+            out(f"   {ref.year} {str(plan):10} lucro {f(pr):>10} PL {f(eq):>10} JCP {f(jcp):>9} div {f(div):>10} "
+                f"LPA {f(lpa_on)}/{f(lpa_pn)} ações {f(s_on)}/{f(s_pn)} {notes[:90] if notes != '{}' else ''}")
+        for crit, reason, detail in q(
+            conn,
+            "SELECT criterion, detail->>'reason', detail::text FROM screen_criterion"
+            " WHERE cvm_code=%s AND as_of=%s AND status='unavailable' ORDER BY 1", (cvm, today),
+        ):
+            out(f"   indisponível {crit}: {detail[:200]}")
+
+    section("Diagnóstico: escala das ações (ações x LPA / lucro, exercício mais recente; ~1 = coerente, ~1000 = ações em milhares)")
+    ratios = []
+    for cvm, ref, ratio in q(
+        conn,
+        """SELECT DISTINCT ON (cvm_code) cvm_code, reference_date,
+                  (shares_on + shares_pn) * coalesce(lpa_on, lpa_pn) / nullif(profit, 0)
+           FROM indicator_annual
+           WHERE profit > 0 AND coalesce(lpa_on, lpa_pn) > 0 AND shares_on IS NOT NULL
+           ORDER BY cvm_code, reference_date DESC""",
+    ):
+        ratios.append((cvm, float(ratio)))
+    bins = Counter("<0,4" if r < 0.4 else "0,4-2,5" if r <= 2.5 else "2,5-400" if r < 400 else "~1000x (400-2500)" if r <= 2500 else ">2500" for _, r in ratios)
+    out(f"{len(ratios)} empresas: {dict(bins)}")
+    for cvm, r in sorted(ratios, key=lambda x: -abs(x[1] - 1))[:12]:
+        out(f"   {names[cvm][:40]:40} razão {r:,.3f}")
+
+    section("Diagnóstico: formatos de ticker no FCA e papéis sem empresa")
+    odd = q(conn, "SELECT count(*), count(DISTINCT ticker) FROM company_security WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z]{4}[0-9]{1,2}$'")[0]
+    out(f"tickers fora do padrão 4 letras + número: {odd[0]} linhas, {odd[1]} distintos")
+    out("amostra: " + ", ".join(r[0] for r in q(conn, "SELECT DISTINCT ticker FROM company_security WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z]{4}[0-9]{1,2}$' ORDER BY 1 LIMIT 30")))
+    _, _, unmapped = compute._company_securities(conn)
+    for tk, vol in sorted(unmapped, key=lambda x: -x[1])[:12]:
+        root = tk[:4]
+        hit = q(conn, "SELECT DISTINCT cvm_code, ticker FROM company_security WHERE ticker ILIKE %s LIMIT 3", (root + "%",))
+        out(f"   {tk:8} {vol / 1e9:7.1f} bi  FCA com '{root}': {hit}")
+
+    section("Diagnóstico: líquidas com proventos zero em 5+ dos últimos 10 anos (DVA pode não cobrir)")
+    for cvm, n0, nn in q(
+        conn,
+        """SELECT a.cvm_code, count(*) FILTER (WHERE a.jcp + a.dividends = 0), count(*)
+           FROM indicator_annual a JOIN screen_criterion c ON c.cvm_code = a.cvm_code AND c.as_of = %s
+                AND c.criterion = 'liquidez' AND c.status = 'pass'
+           WHERE a.reference_date >= '2016-01-01' AND a.jcp IS NOT NULL AND a.dividends IS NOT NULL
+           GROUP BY 1 HAVING count(*) FILTER (WHERE a.jcp + a.dividends = 0) >= 5 ORDER BY 2 DESC LIMIT 25""",
+        (today,),
+    ):
+        out(f"   {names[cvm][:44]:44} {n0} de {nn} anos com proventos zero")
 
 
 def sensitivity(conn, cfg, today, by_company):
