@@ -20,7 +20,7 @@ from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
-from . import compute, load, review
+from . import compute, load, review, watch
 from .db import connect, get_config, migrate
 
 log = logging.getLogger("acoesb3")
@@ -156,7 +156,19 @@ def cmd_compute(conn, a) -> None:
 
 def cmd_review(conn, a) -> None:
     r = a.review_cmd
-    if r == "list":
+    if r == "list" and a.priority:
+        rows = review.priority(conn)
+        print(
+            f"{len(rows)} outliers sem decisão que mudam um resultado (aprovadas primeiro, depois"
+            " por volume negociado):"
+        )
+        for cvm, name, ref, total, med, ratio, dva, fre, st, check in rows[: a.limit]:
+            fmt = lambda v: "-" if v is None else f"{v:,.0f}"  # noqa: E731
+            print(
+                f"  {cvm:>6} {name[:30]:30} {ref} [{st}] total={fmt(total)} mediana={fmt(med)}"
+                f" x{ratio:.1f} | DVA={fmt(dva)} FRE={fmt(fre)} -> {check}: {review.HINTS[check]}"
+            )
+    elif r == "list":
         p = review.pending(conn)
         print("Proventos suspeitos (sem decisão ficam FORA do histórico):")
         for cvm, name, ref, total, med, ratio, dec in p["outliers"][: a.limit]:
@@ -188,6 +200,58 @@ def cmd_review(conn, a) -> None:
         review.set_ticker_root(conn, a.root, a.cvm, a.note)
 
 
+def cmd_watch(conn, a) -> None:
+    w = a.watch_cmd
+    if w == "find":
+        for text in a.name:
+            print(f"== {text}")
+            for cvm, name, st, sector, screen, as_of in watch.find(conn, text):
+                print(
+                    f"  {cvm:>6} {name[:44]:44} CVM={st} setor={sector} filtro={screen} ({as_of})"
+                )
+    elif w == "add":
+        watch.add(conn, a.cvm, a.role, a.segment, a.note)
+    elif w == "remove":
+        watch.remove(conn, a.cvm)
+    elif w == "list":
+        for role, seg, cvm, name, st in watch.listing(conn):
+            print(f"  {role:8} {seg:12} {cvm:>6} {name[:44]:44} filtro={st}")
+    elif w == "explain":
+        for cvm in a.cvm:
+            e = watch.explain(conn, cvm)
+            print(f"== {cvm} retrato de {e['as_of']}")
+            for crit, st, value, thr, detail in e["criteria"]:
+                print(f"  {crit}: {st} valor={value} limite={thr}")
+                if crit == "queda_dividendo_por_acao":
+                    print("    ", json.dumps(detail, ensure_ascii=False, default=str))
+            print("  ano | total DVA/manual | total FRE | fonte | ações ON | ações PN | nota")
+            for ref, tot, fre, src, on, pn, note in e["annual"]:
+                print(f"  {ref} | {tot} | {fre} | {src} | {on} | {pn} | {note or ''}")
+            print("  eventos: data | fator | origem | base da data | tipo | antes | depois")
+            for ev in e["events"]:
+                print("  ", " | ".join(str(x) for x in ev))
+    elif w == "candidates":
+        for seg, rows in watch.candidates(conn, a.per_segment).items():
+            print(f"== {seg}")
+            for cvm, name, _sector, st, vol, issues, fails in rows:
+                print(
+                    f"  {cvm:>6} {name[:40]:40} {st:20} volume={vol or 0:,.0f}"
+                    f" reprovados={fails} {issues}"
+                )
+
+
+def cmd_sql(conn, a) -> None:
+    """Consulta de leitura (diagnóstico): cada consulta roda numa transação somente leitura."""
+    for query in a.query:
+        print(f"-- {query}")
+        with conn.transaction():
+            conn.execute("SET TRANSACTION READ ONLY")
+            cur = conn.execute(query)
+            print("\t".join(c.name for c in cur.description))
+            for row in cur.fetchmany(a.limit):
+                print("\t".join("" if v is None else str(v) for v in row))
+
+
 def cmd_size(conn, a) -> None:
     report = load.size_report(conn)
     mb = report["database_bytes"] / 1024 / 1024
@@ -213,10 +277,34 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("size")
     cp = sub.add_parser("compute", help="indicadores, outliers, eventos e filtro (fase 2)")
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
+    sq = sub.add_parser("sql", help="consulta somente leitura, para diagnóstico")
+    sq.add_argument("--query", action="append", required=True)
+    sq.add_argument("--limit", type=int, default=200)
+    wt = sub.add_parser("watch", help="lista de empresas acompanhadas (carteira e radar)")
+    ws = wt.add_subparsers(dest="watch_cmd", required=True)
+    x = ws.add_parser("find", help="procura empresas pelo nome")
+    x.add_argument("--name", action="append", required=True)
+    x = ws.add_parser("add")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--role", choices=watch.ROLES, required=True)
+    x.add_argument("--segment", required=True)
+    x.add_argument("--note")
+    x = ws.add_parser("explain", help="critérios, fatos anuais e eventos de uma empresa")
+    x.add_argument("--cvm", type=int, action="append", required=True)
+    x = ws.add_parser("remove")
+    x.add_argument("--cvm", type=int, required=True)
+    ws.add_parser("list")
+    x = ws.add_parser("candidates", help="candidatas ao radar por segmento, a partir do filtro")
+    x.add_argument("--per-segment", type=int, default=6)
     rv = sub.add_parser("review", help="revisão manual (outliers, eventos, correções)")
     rs = rv.add_subparsers(dest="review_cmd", required=True)
     rl = rs.add_parser("list")
     rl.add_argument("--limit", type=int, default=100, help="linhas por seção")
+    rl.add_argument(
+        "--priority",
+        action="store_true",
+        help="só os outliers que mudam um resultado (empresas líquidas aprovadas ou sem payout/DY)",
+    )
     x = rs.add_parser("outlier")
     x.add_argument("--cvm", type=int, required=True)
     x.add_argument("--date", type=date.fromisoformat, required=True, help="data-base da DFP")
@@ -269,6 +357,10 @@ def main(argv: list[str] | None = None) -> int:
             cmd_compute(conn, a)
         elif a.cmd == "review":
             cmd_review(conn, a)
+        elif a.cmd == "watch":
+            cmd_watch(conn, a)
+        elif a.cmd == "sql":
+            cmd_sql(conn, a)
     return 0
 
 

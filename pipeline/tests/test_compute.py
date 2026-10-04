@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from test_load import FakeResponse, make_zip
 
-from acoesb3 import compute, http, load, review
+from acoesb3 import compute, http, load, review, watch
 
 D = Decimal
 TODAY = date(2026, 6, 30)
@@ -439,6 +439,53 @@ def test_outlier_pendente_fica_fora_e_usuario_pode_liberar(conn):
         review.decide_outlier(conn, 1, date(2020, 12, 31), "include", None)
 
 
+def test_prioridade_so_lista_outlier_que_muda_resultado(conn):
+    World(conn).company(1, "ABCD", dividends=burst)
+    run(conn)
+    # liquidez não aprovada: fora da lista; aprovada: entra
+    conn.execute("UPDATE screen_criterion SET status = 'fail' WHERE criterion = 'liquidez'")
+    assert review.priority(conn) == []
+    conn.execute("UPDATE screen_criterion SET status = 'pass' WHERE criterion = 'liquidez'")
+    rows = review.priority(conn)
+    assert [(r[0], r[2], r[3]) for r in rows] == [(1, date(2023, 12, 31), D(500))]
+    assert rows[0][9] == "só DVA"  # o cenário não tem FRE
+    # com decisão deixa de ser prioridade
+    review.decide_outlier(conn, 1, date(2023, 12, 31), "exclude", None)
+    assert review.priority(conn) == []
+
+
+def test_conferencia_das_fontes():
+    assert review.source_check(D(100), D(100)) == "concordam"
+    assert review.source_check(D(100), D(100000)) == "divergem"
+    assert review.source_check(None, D(5)) == "só FRE"
+    assert review.source_check(D(5), None) == "só DVA"
+    assert review.source_check(None, None) == "sem fonte"
+    assert review.source_check(D(0), D(0)) == "divergem"
+    assert review.source_check(D(0), D(1500)) == "DVA zerada"
+    assert review.source_check(D(100), D(0)) == "divergem"
+
+
+def test_lista_acompanhada_e_candidatas_ao_radar(conn):
+    world = World(conn)
+    world.company(1, "ABCD", sector="Energia Elétrica")
+    world.company(2, "EFGH", sector="Energia Elétrica")
+    world.company(3, "IJKL", sector="Bancos")
+    run(conn)
+    assert [r[0] for r in watch.find(conn, "EMPRESA 2")] == [2]
+    watch.add(conn, 1, "carteira", "energia", "já tenho")
+    assert [(r[0], r[2]) for r in watch.listing(conn)] == [("carteira", 1)]
+    cand = watch.candidates(conn)
+    assert [r[0] for r in cand["energia"]] == [2]  # a da lista não é candidata
+    assert [r[0] for r in cand["bancos"]] == [3]
+    assert cand["telecom"] == []
+    with pytest.raises(ValueError):
+        watch.add(conn, 1, "outro", "energia", None)
+    with pytest.raises(ValueError):
+        watch.add(conn, 999, "radar", "energia", None)
+    watch.remove(conn, 1)
+    assert watch.listing(conn) == []
+
+
 def no_dva(y):  # a DVA zerada (caso Vale/Gerdau do diagnóstico)
     return (D(0), D(0))
 
@@ -459,6 +506,22 @@ def test_proventos_do_fre_substituem_a_dva_zerada(conn):
     assert c[0] == "pass" and set(c[2]["sources"].values()) == {"fre"}
     assert criterion(conn, 1, TODAY, "dy_medio_liquido")[1] == D("47") / D("800")
     assert status(conn, 1, TODAY)[0] == "approved"
+
+
+def test_fonte_preferida_dva_usa_a_dva_e_deixa_o_fre_para_quando_ela_zera(conn):
+    def dva(y):  # DVA diferente do FRE (20 + 30 = 50) em todos os anos
+        return (D(40), D(60))
+
+    World(conn).company(1, "ABCD", dividends=dva, fre_dividends=fre_pays)
+    sources = lambda: set(  # noqa: E731
+        criterion(conn, 1, TODAY, "proventos_todos_os_anos")[2]["sources"].values()
+    )
+    run(conn)
+    assert sources() == {"dva"}  # padrão desde a decisão de 04/10/2026 (migração 0009)
+    conn.execute("UPDATE app_config SET value = '\"fre\"' WHERE key = 'dividends.preferred_source'")
+    conn.commit()
+    run(conn)
+    assert sources() == {"fre"}
 
 
 def test_sem_fre_a_dva_zerada_reprova(conn):
@@ -546,7 +609,33 @@ def test_evento_do_fre_fixa_o_fator_e_o_salto_de_preco_a_data(conn):
     assert drops(conn) == []
 
 
+def _jump_without_split_file(conn, w):
+    sec = conn.execute("SELECT id FROM security").fetchone()[0]
+    # salto de 50% sem mudança de DISMES: suspeito
+    for d, close in ((date(2022, 5, 31), D("20")), (date(2022, 6, 1), D("10"))):
+        conn.execute(
+            "INSERT INTO quote_daily VALUES (%s, %s, %s, %s, %s, %s, %s, 1, 1, 1000, 1, %s)",
+            (sec, d, close, close, close, close, close, w.sf),
+        )
+    conn.commit()
+
+
+def test_salto_suspeito_vira_automatico_se_as_acoes_do_fre_dobraram(conn):
+    # ações do FRE passam de 1000 para 2000 entre as entregas que cercam o salto de preço
+    w = split_world(conn)
+    _jump_without_split_file(conn, w)
+    out = run(conn)
+    assert out["suspected_events_pending"] == 0
+    assert conn.execute("SELECT factor, status FROM corporate_event").fetchall() == [
+        (D("2"), "auto")
+    ]
+    assert drops(conn) == []
+
+
 def test_evento_suspeito_so_vale_depois_de_confirmado(conn):
+    # sem a confirmação pelas ações do FRE (tolerância negativa), o evento espera revisão
+    conn.execute("UPDATE app_config SET value = '-1' WHERE key = 'events.snapshot_tolerance'")
+    conn.commit()
     w = split_world(conn)
     sec = conn.execute("SELECT id FROM security").fetchone()[0]
     # salto de 50% sem mudança de DISMES: suspeito

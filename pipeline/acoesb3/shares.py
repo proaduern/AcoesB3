@@ -89,3 +89,23 @@ def shares_at(
             if e[0] <= d and (e[0] > s.received or not _in_snapshot(e, total)):
                 scale *= e[1]
     return (round(s.common * scale), round(s.preferred * scale), s.received)
+
+
+def confirmed_by_snapshots(
+    snaps: list[Snapshot], event_date: date, factor: Decimal, tolerance: Decimal
+) -> bool:
+    """O salto de preço de ``event_date`` é um evento societário real? Sim, se a contagem de ações
+    de dois retratos consecutivos do FRE, um antes e outro depois da data, cresceu pelo mesmo
+    fator (dentro da tolerância). Cobre os anos em que o FRE não traz o arquivo de
+    desdobramentos (layout novo)."""
+    if factor <= 0:
+        return False
+    for before, after in zip(snaps, snaps[1:], strict=False):
+        total_before = before.common + before.preferred
+        total_after = after.common + after.preferred
+        if total_before <= 0 or total_after <= 0:
+            continue
+        if before.received < event_date <= after.received:
+            ratio = Decimal(total_after) / Decimal(total_before)
+            return abs(ratio / factor - 1) <= tolerance
+    return False

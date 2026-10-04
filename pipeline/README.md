@@ -26,6 +26,8 @@ acoesb3 daily                  # coleta diária (o que o workflow agendado roda)
 acoesb3 size                   # tamanho do banco por tabela
 acoesb3 compute [--step annual|outliers|events|screens]   # fase 2: indicadores e filtro
 acoesb3 review list            # outliers e eventos societários pendentes
+acoesb3 watch find --name "BB SEGURIDADE"  # acha o código CVM; add/remove/list/candidates montam a lista acompanhada
+acoesb3 review list --priority # só os outliers que mudam um resultado (líquidas aprovadas ou sem payout/DY)
 acoesb3 review outlier --cvm 5410 --date 2024-12-31 --decision include|exclude|reset
 acoesb3 review event --id 12 --decision confirm|reject|reset
 acoesb3 review event-add --ticker ABCD3 --date 2022-06-01 --factor 1.1

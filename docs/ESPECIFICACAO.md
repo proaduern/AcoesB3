@@ -29,8 +29,9 @@ Duas séries de preço:
 
 ## 3. Universo
 
-- **Filtro**: B3 inteira, menos os segmentos excluídos pelo usuário.
-- **Acompanhamento detalhado** (DCF, release, alertas): lista do usuário.
+- **Filtro**: calculado para a B3 inteira (o backtest precisa de empresas canceladas, sem viés de sobrevivência). Decidido em 04/10/2026: o universo de trabalho é só a **lista acompanhada** (`watchlist`): a **carteira** do usuário e o **radar** (2 a 3 candidatas por segmento da carteira, escolhidas a partir do filtro). Revisão manual, preço teto, DCF, alertas e releases valem só para a lista. `screen.excluded_sectors` perdeu o sentido e fica vazio.
+- **Carteira inicial** (04/10/2026): Banco do Brasil, Itaú Unibanco (ITUB4/ITUB3), BB Seguridade, Caixa Seguridade, Porto Seguro, Alupar, Engie, ISA Energia, Sanepar, Copasa, Vivo (Telefônica Brasil). **Segmentos do radar**: bancos, seguradoras, energia (geração e transmissão), saneamento e telecom (`watch.segments`).
+- **Acompanhamento detalhado** (DCF, release, alertas): a lista acompanhada; o DCF vale para quem o usuário indicar dentro dela.
 - **Classes**: uma linha por empresa no filtro e preço teto por classe. Units calculadas pela composição (ex.: TAEE11 = 1 ON + 2 PN).
 - **Liquidez**: volume médio diário ≥ R$ 1 mi e presença em ≥ 90% dos pregões (últimos 3 meses).
 
@@ -44,7 +45,7 @@ Duas séries de preço:
 - pagos em 10 de 10 anos;
 - DY médio líquido de 5 anos > 5%;
 - payout entre 25% e 100%;
-- dividendo por ação caiu em no máximo 3 dos últimos 10 anos.
+- dividendo por ação caiu em no máximo 4 dos últimos 10 anos (decidido em 04/10/2026; antes 3, `screen.dps_max_drop_years`).
 
 **DY líquido**: alíquotas configuráveis (JCP 15%, dividendo 0%).
 
@@ -58,9 +59,9 @@ Duas séries de preço:
 ### 4.1 Definições operacionais do filtro (fase 2, 03/10/2026)
 
 Decididas pelo usuário:
-- **Proventos**, por exercício, nesta ordem: valor informado à mão ou por outra fonte (`dividend_override`) > **FRE** (distribuição de dividendos por classe de ação: valor e data de pagamento; soma de todas as classes, JCP à parte) > DVA da DFP (total declarado no exercício, sem data de pagamento). Cada ano guarda a fonte. O FRE de 2025 em diante não traz mais esse arquivo (layout novo), então os exercícios mais recentes dependem da DVA ou do valor manual. Aprovado pelo usuário em 04/10/2026.
+- **Proventos**, por exercício, nesta ordem (ver a decisão de 04/10/2026 mais abaixo: DVA passou à frente do FRE): valor informado à mão ou por outra fonte (`dividend_override`) > **FRE** (distribuição de dividendos por classe de ação: valor e data de pagamento; soma de todas as classes, JCP à parte) > DVA da DFP (total declarado no exercício, sem data de pagamento). Cada ano guarda a fonte. O FRE de 2025 em diante não traz mais esse arquivo (layout novo), então os exercícios mais recentes dependem da DVA ou do valor manual. Aprovado pelo usuário em 04/10/2026. **Decidido em 04/10/2026 (substitui a ordem acima): DVA > FRE.** A DVA vale em todos os anos e o FRE só cobre DVA ausente ou zerada (`dividends.preferred_source = dva`; `fre` restaura a ordem anterior). Medição de 04/10/2026 (2.583 exercícios com as duas fontes): concordam em 65%; quando divergem, o payout médio pela DVA é plausível (40%–64%) e pelo FRE não (173% quando o FRE é maior, 31% quando é menor). Trocar de fonte no meio da janela (FRE até 2021, DVA depois) cria altas e quedas falsas no dividendo por ação.
 - **Menos de 10 anos de DFP**: não reprova; fica como **histórico insuficiente**, separado de quem reprovou num critério.
-- **Setor**: setor declarado à CVM, com reclassificação manual por empresa (`company_class_override`). Segmentos excluídos: `screen.excluded_sectors` (hoje vazio: o usuário ainda não informou a lista).
+- **Setor**: setor declarado à CVM, com reclassificação manual por empresa (`company_class_override`). `screen.excluded_sectors` não é mais usado (ver seção 3).
 - **Retratos**: o cálculo recebe uma data-base e só usa DFP já entregues nela (`filing_available`). Grava o retrato de hoje e um por fim de ano a partir de `screen.snapshot_first_year` (2020: antes disso a janela de 10 anos não fecha, pois a DFP estruturada começa em 2010).
 - **Queda do dividendo por ação**: por ação de verdade, com ajuste por desdobramento/grupamento/bonificação (ver eventos abaixo).
 - **Payout**: média de 5 anos dentro da faixa (não ano a ano).
@@ -70,7 +71,9 @@ Decididas pelo usuário:
 - **PL**: a conta do PL é achada pelo **nome** (nível 2 do passivo, "Patrimônio Líquido..."), não pelo código, e os não controladores pelo filho com esse nome; sem nomes valem 2.08/2.03. Exige recarga das DFP (migração 0006).
 - **Dividendo por ação** = total de proventos do exercício ÷ ações no fim do exercício, levado à base de ações da data-base. Ações vêm do capital social do FRE (retrato mais próximo do fim do exercício, ajustado por eventos), não da DFP: a quantidade da DFP vem em unidades ou em milhares conforme a empresa, sem indicação de escala (Ambev, Vale e Itaú em milhares). Sem payout × LPA: as contas `3.99.01.01/.02` nem sempre são ON/PN.
 - **DY**: dividendo total do ano ÷ valor de mercado (fechamento do último pregão do exercício × ações do FRE por classe). Com o FRE, o DY existe desde 2010 (antes de adotar o FRE era indisponível antes de 2020).
-- **Eventos societários**: fator oficial do FRE (ações depois ÷ antes; desdobramento, grupamento, bonificação), com data de efeito dada pelo salto de preço do COTAHIST que casa com o evento (até 200 dias depois da aprovação, fator dentro de 8%); sem salto, vale a data de aprovação. Eventos só do COTAHIST valem depois do que o FRE cobre (se automáticos ou confirmados) ou se informados à mão; os suspeitos esperam revisão. Retrato de FRE entregue perto do evento: compara-se a contagem do retrato com o antes/depois do evento para saber se já a inclui.
+- **Eventos societários**: fator oficial do FRE (ações depois ÷ antes; desdobramento, grupamento, bonificação), com data de efeito dada pelo salto de preço do COTAHIST que casa com o evento (até 200 dias depois da aprovação, fator dentro de 8%); sem salto, vale a data de aprovação. Eventos só do COTAHIST valem depois do que o FRE cobre (se automáticos ou confirmados) ou se informados à mão; os suspeitos esperam revisão. Um salto de preço suspeito (fora do FRE) vira automático se a contagem de ações de dois retratos consecutivos do FRE cresceu pelo mesmo fator (`events.snapshot_tolerance`): cobre os anos do FRE sem arquivo de desdobramentos (caso Engie, bonificação de 40% em 27/11/2025). Retrato de FRE entregue perto do evento: compara-se a contagem do retrato com o antes/depois do evento para saber se já a inclui.
+- **Valor de mercado e troca de ticker**: cada classe usa o papel mais negociado que tiver preço na data (a ISA trocou TRPL por ISAE em 11/2024).
+- **Queda do DPS, método alternativo (só informativo)**: o detalhe do critério traz também as quedas pela média móvel de 3 anos (`screen.dps_alt_avg_years`), sem decidir o status. Em 04/10/2026, com ele, Engie e Taesa teriam 3 quedas cada e passariam no limite de 4. A troca de método depende de decisão do usuário.
 - **Dados desatualizados**: empresa cuja última DFP tem mais de 730 dias em relação à data-base (`screen.max_data_age_days`) fica `stale` e não é avaliada. Aprovado pelo usuário em 04/10/2026.
 
 Adotadas por padrão (corrigir se discordar; todas configuráveis):

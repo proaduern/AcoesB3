@@ -44,6 +44,64 @@ def pending(conn: psycopg.Connection) -> dict:
     return {"outliers": outliers, "events": events, "dividends_to_enter": to_enter}
 
 
+def source_check(dva, fre, low=Decimal("0.9"), high=Decimal("1.1")) -> str:
+    """Compara o total da DVA com o do FRE no ano do outlier."""
+    if dva is None and fre is None:
+        return "sem fonte"
+    if dva is None or fre is None:
+        return "só " + ("DVA" if fre is None else "FRE")
+    if dva == 0 and fre > 0:
+        return "DVA zerada"  # a DVA não captura os proventos (caso Vale/Gerdau); vale o FRE
+    if dva <= 0 or fre <= 0:
+        return "divergem"
+    return "concordam" if low <= fre / dva <= high else "divergem"
+
+
+HINTS = {
+    "concordam": "duas fontes iguais: pagamento real; decida include/exclude",
+    "divergem": "fontes diferentes: provável erro de dado ou de escala; confira e lance o valor",
+    "DVA zerada": "DVA zerada e FRE com valor: o total é o do FRE; provável pagamento real",
+    "só DVA": "uma fonte só: confirme no release antes de decidir",
+    "só FRE": "uma fonte só: confirme no release antes de decidir",
+    "sem fonte": "sem total de proventos para conferir",
+}
+
+
+def priority(conn: psycopg.Connection) -> list[tuple]:
+    """Outliers sem decisão que mudam um resultado: empresas líquidas (critério de liquidez
+    aprovado) já aprovadas, ou sem payout/DY por causa de outliers ou prejuízos. Aprovadas
+    primeiro, depois por volume negociado. Usa o retrato mais recente de cada empresa."""
+    rows = conn.execute(
+        """
+        WITH latest AS (
+            SELECT DISTINCT ON (cvm_code) cvm_code, as_of, status
+            FROM screen_result ORDER BY cvm_code, as_of DESC
+        )
+        SELECT o.cvm_code, c.name, o.reference_date, o.total, o.median, o.ratio,
+               CASE WHEN a.jcp IS NOT NULL THEN a.jcp + a.dividends END AS dva,
+               CASE WHEN a.fre_jcp IS NOT NULL THEN a.fre_jcp + a.fre_dividends END AS fre,
+               l.status, liq.value
+        FROM dividend_outlier o
+        JOIN company c USING (cvm_code)
+        JOIN latest l USING (cvm_code)
+        JOIN screen_criterion liq ON liq.as_of = l.as_of AND liq.cvm_code = o.cvm_code
+             AND liq.criterion = 'liquidez' AND liq.status = 'pass'
+        LEFT JOIN indicator_annual a ON a.cvm_code = o.cvm_code
+             AND a.reference_date = o.reference_date
+        LEFT JOIN outlier_review r ON r.cvm_code = o.cvm_code
+             AND r.reference_date = o.reference_date
+        WHERE r.decision IS NULL
+          AND l.status IN ('approved', 'rejected', 'insufficient_data')
+          AND (l.status = 'approved' OR EXISTS (
+                SELECT 1 FROM screen_criterion k
+                WHERE k.as_of = l.as_of AND k.cvm_code = o.cvm_code
+                  AND k.status = 'unavailable' AND k.detail->>'reason' = 'outliers_or_losses'))
+        ORDER BY (l.status = 'approved') DESC, liq.value DESC NULLS LAST, o.ratio DESC
+        """
+    ).fetchall()
+    return [(*r[:8], r[8], source_check(r[6], r[7])) for r in rows]
+
+
 def decide_outlier(conn, cvm_code: int, reference_date: date, decision: str, note: str | None):
     if decision == "reset":
         conn.execute(
