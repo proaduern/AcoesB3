@@ -69,8 +69,9 @@ HINTS = {
 
 def priority(conn: psycopg.Connection) -> list[tuple]:
     """Outliers sem decisão que mudam um resultado: empresas líquidas (critério de liquidez
-    aprovado) já aprovadas, ou sem payout/DY por causa de outliers ou prejuízos. Aprovadas
-    primeiro, depois por volume negociado. Usa o retrato mais recente de cada empresa."""
+    aprovado) já aprovadas, ou sem payout/DY por causa de outliers ou prejuízos, ou na lista
+    acompanhada (``watchlist``) em qualquer status. Aprovadas primeiro, depois por volume negociado.
+    Usa o retrato mais recente de cada empresa."""
     rows = conn.execute(
         """
         WITH latest AS (
@@ -91,8 +92,10 @@ def priority(conn: psycopg.Connection) -> list[tuple]:
         LEFT JOIN outlier_review r ON r.cvm_code = o.cvm_code
              AND r.reference_date = o.reference_date
         WHERE r.decision IS NULL
-          AND l.status IN ('approved', 'rejected', 'insufficient_data')
-          AND (l.status = 'approved' OR EXISTS (
+          AND l.status IN ('approved', 'rejected', 'insufficient_data', 'insufficient_history')
+          AND (l.status = 'approved'
+               OR EXISTS (SELECT 1 FROM watchlist w WHERE w.cvm_code = o.cvm_code)
+               OR EXISTS (
                 SELECT 1 FROM screen_criterion k
                 WHERE k.as_of = l.as_of AND k.cvm_code = o.cvm_code
                   AND k.status = 'unavailable' AND k.detail->>'reason' = 'outliers_or_losses'))

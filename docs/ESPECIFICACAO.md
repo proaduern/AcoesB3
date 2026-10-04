@@ -45,7 +45,7 @@ Duas séries de preço:
 - pagos em 10 de 10 anos;
 - DY médio líquido de 5 anos > 5%;
 - payout entre 25% e 100%;
-- dividendo por ação caiu em no máximo 4 dos últimos 10 anos, medido pela **média móvel de 3 anos** (a média do DPS dos 3 anos até k contra a média móvel do ano anterior; até 7 comparações na janela). Decidido em 04/10/2026; antes: ano contra ano, no máximo 3 (`screen.dps_method`, `screen.dps_max_drop_years`).
+- dividendo por ação caiu em no máximo 4 dos últimos 10 anos, medido pela **média móvel de 3 anos** (a média do DPS dos 3 anos até k contra a média móvel do ano anterior; até 7 comparações na janela, mínimo de 3 para avaliar). Decidido em 04/10/2026; antes: ano contra ano, no máximo 3 (`screen.dps_method`, `screen.dps_max_drop_years`).
 
 **DY líquido**: alíquotas configuráveis (JCP 15%, dividendo 0%).
 
