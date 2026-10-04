@@ -599,7 +599,9 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     ).fetchall()
 
     # Preços de fim de exercício para o valor de mercado (ações do FRE x fechamento da classe).
-    wanted = {(sid, r[2]) for r in rows for sid in class_secs.get(r[1], {}).values()}
+    wanted = {
+        (sid, r[2]) for r in rows for sids in class_secs.get(r[1], {}).values() for sid in sids
+    }
     prices = _fiscal_year_end_prices(conn, wanted, int(cfg["market.price_lookback_days"]))
 
     def market_cap(cvm, ref, on, pn):
@@ -607,8 +609,14 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
         for cls, qty in (("on", on), ("pn", pn)):
             if qty == 0:
                 continue
-            sid = class_secs.get(cvm, {}).get(cls)
-            price = prices.get((sid, ref)) if sid else None
+            price = next(
+                (
+                    prices[(sid, ref)]
+                    for sid in class_secs.get(cvm, {}).get(cls, [])
+                    if (sid, ref) in prices
+                ),
+                None,
+            )
             if price is None:
                 return None
             total += price * qty

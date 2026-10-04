@@ -302,7 +302,10 @@ def test_papel_de_referencia_prefere_on_mais_negociada():
     assert mapping.reference_security(secs) == ("on", 2)
     assert mapping.reference_security([(1, "ABCD4", 1.0)]) == ("pn", 1)
     assert mapping.reference_security([(1, "ABCD11", 1.0)]) is None
-    assert mapping.class_securities(secs) == {"on": 2, "pn": 1}
+    assert mapping.class_securities(secs) == {"on": [2], "pn": [1]}
+    # troca de ticker: os dois papéis da classe entram, o mais negociado primeiro
+    trocou = [(1, "TRPL4", 90.0), (2, "ISAE4", 10.0), (3, "TRPL3", 50.0), (4, "ISAE3", 5.0)]
+    assert mapping.class_securities(trocou) == {"on": [3, 4], "pn": [1, 2]}
 
 
 # --- Critérios do filtro ------------------------------------------------------
@@ -323,6 +326,7 @@ P = screen.ScreenParams.from_config(
         "screen.dps_max_drop_years": 3,
         "screen.dps_drop_tolerance": 0,
         "screen.dps_min_pairs": 6,
+        "screen.dps_alt_avg_years": 3,
         "tax.jcp": 0.15,
         "tax.dividend": 0,
         "outlier.multiple": 2,
@@ -738,3 +742,27 @@ def test_fonte_preferida_dos_proventos():
     assert indicators.choose_dividends(D(5), D(5), "manual", *fre, prefer="dva") == (
         D(5), D(5), "manual",
     )  # fmt: skip
+
+
+def test_queda_do_dps_pela_media_de_3_anos():
+    from decimal import Decimal as D
+
+    from acoesb3 import screen
+
+    # DPS que oscila ano a ano (quedas em 2018, 2020 e 2022), mas com tendência de alta
+    dps = {
+        2016: D(10),
+        2017: D(14),
+        2018: D(12),
+        2019: D(18),
+        2020: D(15),
+        2021: D(22),
+        2022: D(19),
+    }
+    keys = list(dps)
+    assert screen.avg_window_drops(dps, keys, 3, D(0)) == []
+    # média cai de verdade: 3 anos fortes e depois 3 fracos
+    queda = {2016: D(20), 2017: D(20), 2018: D(20), 2019: D(10), 2020: D(10), 2021: D(10)}
+    assert screen.avg_window_drops(queda, list(queda), 3, D(0)) == [2019, 2020, 2021]
+    # sem anos suficientes: sem comparação
+    assert screen.avg_window_drops({2020: D(1), 2021: D(2)}, [2020, 2021], 3, D(0)) is None

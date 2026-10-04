@@ -65,13 +65,18 @@ def reference_security(securities: list[tuple[int, str, float]]) -> tuple[str, i
     return None
 
 
-def class_securities(securities: list[tuple[int, str, float]]) -> dict[str, int]:
-    """Papel mais negociado de cada classe ('on', 'pn') para o valor de mercado."""
-    out: dict[str, int] = {}
+def class_securities(securities: list[tuple[int, str, float]]) -> dict[str, list[int]]:
+    """Papéis de cada classe ('on', 'pn') para o valor de mercado, o mais negociado primeiro.
+
+    Pode haver mais de um papel por classe quando a empresa muda de ticker (TRPL4 -> ISAE4): o valor
+    de mercado usa o primeiro que tiver preço na data."""
+    out: dict[str, list[int]] = {}
     for cls in ("on", "pn"):
-        cands = [(vol, sid) for sid, t, vol in securities if ticker_class(t) == cls]
+        cands = sorted(
+            ((vol, sid) for sid, t, vol in securities if ticker_class(t) == cls), reverse=True
+        )
         if cands:
-            out[cls] = max(cands)[1]
+            out[cls] = [sid for _, sid in cands]
     return out
 
 

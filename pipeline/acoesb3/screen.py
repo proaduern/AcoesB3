@@ -31,6 +31,7 @@ class ScreenParams:
     dps_max_drops: int
     dps_tolerance: Decimal
     dps_min_pairs: int
+    dps_alt_avg_years: int
     tax_jcp: Decimal
     tax_dividend: Decimal
     outlier_multiple: Decimal
@@ -64,6 +65,7 @@ class ScreenParams:
             dps_max_drops=integer("screen.dps_max_drop_years"),
             dps_tolerance=num("screen.dps_drop_tolerance"),
             dps_min_pairs=integer("screen.dps_min_pairs"),
+            dps_alt_avg_years=integer("screen.dps_alt_avg_years"),
             tax_jcp=num("tax.jcp"),
             tax_dividend=num("tax.dividend"),
             outlier_multiple=num("outlier.multiple"),
@@ -359,6 +361,25 @@ def _dps(y: YearData) -> Decimal | None:
     return total / y.shares / y.shares_factor
 
 
+def avg_window_drops(
+    dps: dict[int, Decimal], keys: list[int], n: int, tolerance: Decimal
+) -> list[int] | None:
+    """Método alternativo (só informativo): queda = média do DPS dos ``n`` últimos anos menor que
+    a dos ``n`` anos anteriores. Precisa dos ``2n - 1`` anos de DPS em volta de cada comparação; sem
+    nenhuma comparação possível devolve None."""
+    out, compared = [], 0
+    for k in keys:
+        recent = [k - i for i in range(n)]
+        before = [k - 1 - i for i in range(n)]
+        if all(y in dps for y in recent + before):
+            compared += 1
+            a = sum(dps[y] for y in recent) / n
+            b = sum(dps[y] for y in before) / n
+            if a < b * (1 - tolerance):
+                out.append(k)
+    return out if compared else None
+
+
 def dps_drops(years, last, p: ScreenParams) -> Criterion:
     """Quedas do dividendo por ação na janela (ver ``_dps``).
 
@@ -382,6 +403,9 @@ def dps_drops(years, last, p: ScreenParams) -> Criterion:
         {
             "dps": {k: str(v) for k, v in dps.items()},
             "drop_years": drops,
+            # Método alternativo, só para comparação (não decide o status)
+            "alt_avg_years": p.dps_alt_avg_years,
+            "alt_avg_drop_years": avg_window_drops(dps, keys, p.dps_alt_avg_years, p.dps_tolerance),
             "comparable_pairs": len(pairs),
             "sources": {k: years[k].dividends_source for k in keys},
             **_source_detail(years, keys),
