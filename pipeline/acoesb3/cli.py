@@ -240,6 +240,18 @@ def cmd_watch(conn, a) -> None:
                 )
 
 
+def cmd_sql(conn, a) -> None:
+    """Consulta de leitura (diagnóstico): cada consulta roda numa transação somente leitura."""
+    for query in a.query:
+        print(f"-- {query}")
+        with conn.transaction():
+            conn.execute("SET TRANSACTION READ ONLY")
+            cur = conn.execute(query)
+            print("\t".join(c.name for c in cur.description))
+            for row in cur.fetchmany(a.limit):
+                print("\t".join("" if v is None else str(v) for v in row))
+
+
 def cmd_size(conn, a) -> None:
     report = load.size_report(conn)
     mb = report["database_bytes"] / 1024 / 1024
@@ -265,6 +277,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("size")
     cp = sub.add_parser("compute", help="indicadores, outliers, eventos e filtro (fase 2)")
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
+    sq = sub.add_parser("sql", help="consulta somente leitura, para diagnóstico")
+    sq.add_argument("--query", action="append", required=True)
+    sq.add_argument("--limit", type=int, default=200)
     wt = sub.add_parser("watch", help="lista de empresas acompanhadas (carteira e radar)")
     ws = wt.add_subparsers(dest="watch_cmd", required=True)
     x = ws.add_parser("find", help="procura empresas pelo nome")
@@ -344,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_review(conn, a)
         elif a.cmd == "watch":
             cmd_watch(conn, a)
+        elif a.cmd == "sql":
+            cmd_sql(conn, a)
     return 0
 
 

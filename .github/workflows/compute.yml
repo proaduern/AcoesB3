@@ -30,6 +30,9 @@ on:
       watch_explain:
         description: "Explicar empresas: códigos CVM separados por ponto e vírgula"
         required: false
+      sql:
+        description: "Diagnóstico: consultas SQL somente leitura, separadas por ###"
+        required: false
       watch_candidates:
         description: "Listar candidatas ao radar por segmento"
         type: boolean
@@ -111,4 +114,12 @@ jobs:
           if [ "$WATCH_CANDIDATES" = "true" ]; then
             acoesb3 watch candidates --per-segment 6
           fi
+      - name: Consultas de diagnóstico
+        if: ${{ inputs.sql != '' }}
+        env:
+          SQL: ${{ inputs.sql }}
+        run: |
+          args=()
+          while IFS= read -r -d '' q; do [ -n "${q// /}" ] && args+=(--query "$q"); done < <(printf '%s' "$SQL" | sed 's/###/\x00/g'; printf '\0')
+          acoesb3 sql "${args[@]}"
       - run: acoesb3 size
