@@ -365,8 +365,10 @@ def decisions_report(conn, cfg, today):
     out(str(dict(q(conn, "SELECT notes->>'equity', count(*) FROM indicator_annual WHERE equity IS NULL AND reference_date >= '2020-01-01' GROUP BY 1"))))
     for cvm in (1023,):
         for fid, ref in q(conn, "SELECT id, reference_date FROM filing WHERE doc_type='DFP' AND cvm_code=%s AND reference_date='2025-12-31' AND has_lines", (cvm,)):
-            codes = q(conn, "SELECT account_code, value FROM financial_line WHERE filing_id=%s AND statement='BPP' ORDER BY 1", (fid,))
-            out(f"   {names[cvm]} {ref}: BPP guardado: " + ", ".join(f"{c}={float(v) / 1e6:,.0f}" for c, v in codes))
+            codes = q(conn, "SELECT account_code, value, description, consolidated FROM financial_line WHERE filing_id=%s AND statement='BPP' ORDER BY 1", (fid,))
+            out(f"   {names[cvm]} {ref}: BPP guardado: " + ", ".join(f"{c}={float(v) / 1e6:,.0f}" for c, v, _d, _c in codes))
+            for c, v, d, cons in codes:
+                out(f"      {c} cons={cons} {d!r}")
 
     section("Proventos: líquidas cujo FRE (até 2021) tem valor e a DVA recente é zero (tipo Vale/Gerdau)")
     rows = q(
