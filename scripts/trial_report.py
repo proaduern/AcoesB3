@@ -168,7 +168,7 @@ def main():
     out(f"{len(by_company)} empresas com papel; raízes ambíguas: {len(ambiguous)} {dict(list(ambiguous.items())[:10])}")
     out("papéis sem empresa (maior volume): " + ", ".join(f"{t} ({v / 1e9:.1f} bi)" for t, v in sorted(unmapped, key=lambda x: -x[1])[:15]))
 
-    diagnostics(conn, today)
+    diagnostics(conn, today, cfg)
     fre_report(conn, cfg, today)
     decisions_report(conn, cfg, today)
 
@@ -178,7 +178,7 @@ def main():
             f.write("```\n" + "\n".join(LINES)[:900_000] + "\n```\n")
 
 
-def diagnostics(conn, today):
+def diagnostics(conn, today, cfg):
     names = dict(q(conn, "SELECT cvm_code, name FROM company"))
 
     section("Diagnóstico: DFP sem plano de contas (2022+): escopo e contas de lucro presentes")
