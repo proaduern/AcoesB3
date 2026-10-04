@@ -54,6 +54,13 @@ Outlier só como pico isolado; `not_listed` + mapeamento por nome; DVA zerada ap
 indisponível + lista manual; PL de banco achado pelo nome da conta (migração 0006: `financial_line.description`;
 exige `reload_dfp`). Ver seção 4.1 da especificação.
 
+## Decisões de 04/10/2026 (terceira leva)
+
+Universo de trabalho = lista acompanhada (`watchlist`, comandos `acoesb3 watch`); proventos: DVA antes do FRE
+(`dividends.preferred_source`); queda do DPS: no máximo 4 em 10 anos; eventos de preço confirmados pela contagem de ações do FRE
+(caso Engie); valor de mercado com todos os papéis da classe (caso ISA); método alternativo da queda do DPS (média de 3 anos)
+só informativo. Estado final: 10 aprovadas hoje (inclui ISA), 315 reprovadas.
+
 ## Ficou de fora, e por quê
 
 | Item | Motivo |
