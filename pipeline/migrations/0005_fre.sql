@@ -67,7 +67,7 @@ CREATE TABLE company_event (
     note        text,
     shares_before bigint,                  -- contagem de ações antes/depois (só eventos do FRE)
     shares_after  bigint,
-    PRIMARY KEY (cvm_code, event_date, source)
+    PRIMARY KEY (cvm_code, event_date, source, factor)  -- dois eventos na mesma data valem os dois
 );
 
 -- Status novo: dados desatualizados.
@@ -82,5 +82,6 @@ INSERT INTO app_config (key, value, description) VALUES
  ('fre.jcp_kinds', '["Juros Sobre Capital Próprio"]', 'Espécies de provento do FRE somadas como JCP; as demais (inclusive "Outros" e vazio) contam como dividendos'),
  ('shares.max_snapshot_gap_days', '550', 'Distância máxima entre o fim do exercício e a entrega do FRE usado para contar as ações'),
  ('events.match_window_days', '200', 'Evento do FRE (data de aprovação) casa com um salto do COTAHIST até esta quantidade de dias depois'),
- ('events.match_tolerance', '0.08', 'Diferença relativa máxima entre o fator do FRE e o do salto de preço para casarem')
+ ('events.match_tolerance', '0.08', 'Diferença relativa máxima entre o fator do FRE e o do salto de preço para casarem'),
+ ('events.dedupe_days', '45', 'Eventos do FRE com o mesmo fator (diferença de até 0,5%) e aprovação com até esta quantidade de dias de distância são o mesmo evento reapresentado')
 ON CONFLICT DO NOTHING;

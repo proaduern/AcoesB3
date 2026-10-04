@@ -181,3 +181,30 @@ def test_retrato_anterior_sem_a_contagem_nova_aplica_o_evento_aprovado_antes_del
     snaps = [shares.Snapshot(date(2022, 4, 15), 1100, 0)]
     got = shares.shares_at(snaps, [event], date(2022, 12, 31), date(2030, 1, 1), GAP)
     assert got == (1100, 0, date(2022, 4, 15))
+
+
+# --- Eventos repetidos nos documentos do FRE --------------------------------------
+
+
+def test_mesmo_evento_com_aprovacao_ligeiramente_diferente_conta_uma_vez():
+    a = FE(date(2012, 10, 16), D(2), date(2013, 6, 1), "Desdobramento")
+    b = FE(date(2012, 10, 18), D(2), date(2013, 5, 1), "Desdobramento")  # outro documento
+    events, _ = merge([a, b], [])
+    assert len(events) == 1 and events[0].known_from == date(2013, 5, 1)
+
+
+def test_dois_eventos_diferentes_na_mesma_data_valem_os_dois():
+    # desdobramento 2:1 e bonificação 10% aprovados juntos
+    a = FE(date(2012, 10, 16), D(2), K, "Desdobramento")
+    b = FE(date(2012, 10, 16), D("1.1"), K, "Bonificação")
+    events, _ = merge([a, b], [])
+    assert sorted(e.factor for e in events) == [D("1.1"), D(2)]
+    assert corporate.cumulative_factor(
+        [(e.event_date, e.factor) for e in events], date(2012, 1, 1), date(2013, 1, 1)
+    ) == D("2.2")
+
+
+def test_eventos_iguais_muito_distantes_no_tempo_sao_distintos():
+    a = FE(date(2012, 10, 16), D(2), K, "Desdobramento")
+    b = FE(date(2016, 3, 1), D(2), K, "Desdobramento")
+    assert len(merge([a, b], [])[0]) == 2

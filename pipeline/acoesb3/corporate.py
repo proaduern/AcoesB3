@@ -16,7 +16,7 @@ detectado não é ajustado: ver limitações em docs/fase2.md.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 
@@ -131,12 +131,30 @@ class CompanyEvent:
     shares_after: int | None = None
 
 
+def dedupe_fre(events: list[FreEvent], days: int, tolerance: Decimal) -> list[FreEvent]:
+    """Documentos do FRE de anos seguidos repetem o mesmo evento, às vezes com a data de
+    aprovação um pouco diferente. Mesmo fator (até ``tolerance``) e datas a até ``days`` dias:
+    um só evento, com a entrega mais antiga. Fatores diferentes na mesma data são eventos
+    distintos (valem os dois)."""
+    out: list[FreEvent] = []
+    for e in sorted(events, key=lambda x: (x.approved_on, x.factor)):
+        for i, kept in enumerate(out):
+            same_date = abs((e.approved_on - kept.approved_on).days) <= days
+            if same_date and abs(e.factor / kept.factor - 1) <= tolerance:
+                out[i] = replace(kept, known_from=min(kept.known_from, e.known_from))
+                break
+        else:
+            out.append(e)
+    return out
+
+
 def merge_events(
     fre_events: list[FreEvent],
     price_events: list[PriceEvent],
     coverage_end: date | None,
     window_days: int,
     tolerance: Decimal,
+    dedupe_days: int = 45,
 ) -> tuple[list[CompanyEvent], list[PriceEvent]]:
     """Junta eventos do FRE e do COTAHIST de uma empresa.
 
@@ -146,14 +164,10 @@ def merge_events(
     posterior ao que o FRE cobre (``coverage_end``; sem cobertura, entra). Devolve também os
     eventos do COTAHIST descartados por divergirem do FRE, para revisão.
     """
-    unique: dict[tuple[date, Decimal], FreEvent] = {}
-    for e in fre_events:
-        key = (e.approved_on, round(e.factor, 4))
-        if key not in unique or e.known_from < unique[key].known_from:
-            unique[key] = e
+    unique = dedupe_fre(fre_events, dedupe_days, Decimal("0.005"))
     used: set[int] = set()
     out: list[CompanyEvent] = []
-    for e in sorted(unique.values(), key=lambda x: x.approved_on):
+    for e in unique:
         best = None
         for i, pe in enumerate(price_events):
             if i in used or pe.status == "manual":

@@ -351,6 +351,7 @@ def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
     """Eventos por empresa: fator do FRE, data de efeito do COTAHIST (corporate.merge_events)."""
     window = int(cfg["events.match_window_days"])
     tol = Decimal(str(cfg["events.match_tolerance"]))
+    dedupe = int(cfg["events.dedupe_days"])
     by_company, _, _ = _company_securities(conn)
     sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
     fre_events: dict[int, list] = defaultdict(list)
@@ -390,7 +391,12 @@ def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
     out, dropped = [], []
     for cvm in set(fre_events) | set(price_events):
         merged, drop = corporate.merge_events(
-            fre_events.get(cvm, []), price_events.get(cvm, []), coverage.get(cvm), window, tol
+            fre_events.get(cvm, []),
+            price_events.get(cvm, []),
+            coverage.get(cvm),
+            window,
+            tol,
+            dedupe,
         )
         out += [
             (
@@ -419,7 +425,12 @@ def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
     by_kind: dict[str, int] = defaultdict(int)
     for row in out:
         by_kind[f"{row[3]}/{row[4]}"] += 1
+    raw_fre = sum(len(v) for v in fre_events.values())
     return {
+        "fre_events_raw": raw_fre,
+        "fre_events_unique": sum(
+            len(corporate.dedupe_fre(v, dedupe, Decimal("0.005"))) for v in fre_events.values()
+        ),
         "company_events": dict(by_kind),
         "price_events_dropped_vs_fre": len(dropped),
         "dropped_sample": sorted(dropped)[:10],

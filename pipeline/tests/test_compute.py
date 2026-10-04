@@ -563,3 +563,12 @@ def test_historico_curto_e_historico_insuficiente(conn):
     conn.commit()
     run(conn)
     assert status(conn, 1, TODAY)[0] == "insufficient_history"
+
+
+def test_dois_eventos_do_fre_na_mesma_data_nao_quebram_a_gravacao(conn):
+    # Falha real do Actions: UniqueViolation (cvm 8192, 16/10/2012) com a chave antiga
+    split_world(conn, fre_splits=[(date(2022, 5, 10), 1000, 2000), (date(2022, 5, 10), 2000, 2200)])
+    out = run(conn)
+    rows = conn.execute("SELECT factor FROM company_event ORDER BY factor").fetchall()
+    assert rows == [(D("1.1"),), (D(2),)]
+    assert out["snapshots"]
