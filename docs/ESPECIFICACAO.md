@@ -45,7 +45,7 @@ Duas séries de preço:
 - pagos em 10 de 10 anos;
 - DY médio líquido de 5 anos > 5%;
 - payout entre 25% e 100%;
-- dividendo por ação caiu em no máximo 3 dos últimos 10 anos.
+- dividendo por ação caiu em no máximo 4 dos últimos 10 anos (decidido em 04/10/2026; antes 3, `screen.dps_max_drop_years`).
 
 **DY líquido**: alíquotas configuráveis (JCP 15%, dividendo 0%).
 
@@ -59,7 +59,7 @@ Duas séries de preço:
 ### 4.1 Definições operacionais do filtro (fase 2, 03/10/2026)
 
 Decididas pelo usuário:
-- **Proventos**, por exercício, nesta ordem: valor informado à mão ou por outra fonte (`dividend_override`) > **FRE** (distribuição de dividendos por classe de ação: valor e data de pagamento; soma de todas as classes, JCP à parte) > DVA da DFP (total declarado no exercício, sem data de pagamento). Cada ano guarda a fonte. O FRE de 2025 em diante não traz mais esse arquivo (layout novo), então os exercícios mais recentes dependem da DVA ou do valor manual. Aprovado pelo usuário em 04/10/2026. A ordem entre FRE e DVA é configurável (`dividends.preferred_source`, hoje `fre`; com `dva` a DVA vale em todos os anos e o FRE só cobre DVA ausente ou zerada). Medição de 04/10/2026 (2.583 exercícios com as duas fontes): concordam em 65%; quando divergem, o payout médio pela DVA é plausível (40%–64%) e pelo FRE não (173% quando o FRE é maior, 31% quando é menor). Trocar de fonte no meio da janela (FRE até 2021, DVA depois) cria altas e quedas falsas no dividendo por ação.
+- **Proventos**, por exercício, nesta ordem (ver a decisão de 04/10/2026 mais abaixo: DVA passou à frente do FRE): valor informado à mão ou por outra fonte (`dividend_override`) > **FRE** (distribuição de dividendos por classe de ação: valor e data de pagamento; soma de todas as classes, JCP à parte) > DVA da DFP (total declarado no exercício, sem data de pagamento). Cada ano guarda a fonte. O FRE de 2025 em diante não traz mais esse arquivo (layout novo), então os exercícios mais recentes dependem da DVA ou do valor manual. Aprovado pelo usuário em 04/10/2026. **Decidido em 04/10/2026 (substitui a ordem acima): DVA > FRE.** A DVA vale em todos os anos e o FRE só cobre DVA ausente ou zerada (`dividends.preferred_source = dva`; `fre` restaura a ordem anterior). Medição de 04/10/2026 (2.583 exercícios com as duas fontes): concordam em 65%; quando divergem, o payout médio pela DVA é plausível (40%–64%) e pelo FRE não (173% quando o FRE é maior, 31% quando é menor). Trocar de fonte no meio da janela (FRE até 2021, DVA depois) cria altas e quedas falsas no dividendo por ação.
 - **Menos de 10 anos de DFP**: não reprova; fica como **histórico insuficiente**, separado de quem reprovou num critério.
 - **Setor**: setor declarado à CVM, com reclassificação manual por empresa (`company_class_override`). `screen.excluded_sectors` não é mais usado (ver seção 3).
 - **Retratos**: o cálculo recebe uma data-base e só usa DFP já entregues nela (`filing_available`). Grava o retrato de hoje e um por fim de ano a partir de `screen.snapshot_first_year` (2020: antes disso a janela de 10 anos não fecha, pois a DFP estruturada começa em 2010).

@@ -513,16 +513,15 @@ def test_fonte_preferida_dva_usa_a_dva_e_deixa_o_fre_para_quando_ela_zera(conn):
         return (D(40), D(60))
 
     World(conn).company(1, "ABCD", dividends=dva, fre_dividends=fre_pays)
+    sources = lambda: set(  # noqa: E731
+        criterion(conn, 1, TODAY, "proventos_todos_os_anos")[2]["sources"].values()
+    )
     run(conn)
-    assert set(criterion(conn, 1, TODAY, "proventos_todos_os_anos")[2]["sources"].values()) == {
-        "fre"
-    }
-    conn.execute("UPDATE app_config SET value = '\"dva\"' WHERE key = 'dividends.preferred_source'")
+    assert sources() == {"dva"}  # padrão desde a decisão de 04/10/2026 (migração 0009)
+    conn.execute("UPDATE app_config SET value = '\"fre\"' WHERE key = 'dividends.preferred_source'")
     conn.commit()
     run(conn)
-    assert set(criterion(conn, 1, TODAY, "proventos_todos_os_anos")[2]["sources"].values()) == {
-        "dva"
-    }
+    assert sources() == {"fre"}
 
 
 def test_sem_fre_a_dva_zerada_reprova(conn):
