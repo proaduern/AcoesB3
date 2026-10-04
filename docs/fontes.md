@@ -82,7 +82,7 @@ Verificado em 03/10/2026:
 
 ## CVM — FRE (Formulário de Referência)
 
-Verificado em 04/10/2026 baixando os arquivos reais pelo GitHub Actions (sonda `probe_fre.py`).
+Verificado em 04/10/2026 baixando os arquivos reais pelo GitHub Actions (sonda temporária, já removida; os fixtures de `pipeline/tests/fixtures` guardam as linhas reais).
 
 - URL: `https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS/fre_cia_aberta_{ano}.zip`, de 2010 a 2026
   (44 arquivos por zip). Os zips de 2010 a 2024 têm o mesmo conjunto de arquivos; **os de 2025 e 2026 (layout
