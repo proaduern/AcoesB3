@@ -5,6 +5,7 @@ e o DISMES, outliers, mapeamento de tickers e a comparação das três regras em
 (payout, outlier, dividendo por ação). Só leitura.
 """
 
+import math
 import os
 import statistics
 from collections import Counter, defaultdict
@@ -13,7 +14,7 @@ from decimal import Decimal
 
 import psycopg
 
-from acoesb3 import compute, corporate, mapping
+from acoesb3 import compute, corporate, mapping, shares
 
 D = Decimal
 LINES: list[str] = []
@@ -168,7 +169,7 @@ def main():
     out("papéis sem empresa (maior volume): " + ", ".join(f"{t} ({v / 1e9:.1f} bi)" for t, v in sorted(unmapped, key=lambda x: -x[1])[:15]))
 
     diagnostics(conn, today)
-    sensitivity(conn, cfg, today, by_company)
+    fre_report(conn, cfg, today)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -196,18 +197,18 @@ def diagnostics(conn, today):
         out(f"{n:>5}  consolidada={cons} DRE_presente={has_dre} contas={list(codes)}")
 
     section("Diagnóstico: fatos anuais de empresas conhecidas (R$ milhões; ações em milhões)")
-    for cvm in (1023, 19348, 9512, 4170, 23264, 17329, 5410, 20257, 11258, 8036):
+    for cvm in (1023, 19348, 9512, 4170, 23264, 17329, 5410, 20257, 11258, 8036, 3980):
         out(f"-- {names.get(cvm, cvm)} ({cvm})")
-        for ref, plan, pr, eq, jcp, div, src, lpa_on, lpa_pn, s_on, s_pn, notes in q(
+        for ref, plan, pr, eq, jcp, div, fjcp, fdiv, s_on, s_pn, scope in q(
             conn,
-            """SELECT reference_date, plan, profit/1e6, equity/1e6, jcp/1e6, dividends/1e6, dividends_source,
-                      lpa_on, lpa_pn, shares_on/1e6, shares_pn/1e6, notes::text
+            """SELECT reference_date, plan, profit/1e6, equity/1e6, jcp/1e6, dividends/1e6, fre_jcp/1e6,
+                      fre_dividends/1e6, shares_on/1e6, shares_pn/1e6, notes->>'scope'
                FROM indicator_annual WHERE cvm_code = %s AND reference_date >= '2018-01-01' ORDER BY 1""",
             (cvm,),
         ):
             f = lambda v: "-" if v is None else f"{float(v):,.1f}"  # noqa: E731
-            out(f"   {ref.year} {str(plan):10} lucro {f(pr):>10} PL {f(eq):>10} JCP {f(jcp):>9} div {f(div):>10} "
-                f"LPA {f(lpa_on)}/{f(lpa_pn)} ações {f(s_on)}/{f(s_pn)} {notes[:90] if notes != '{}' else ''}")
+            out(f"   {ref.year} {str(plan):10} {str(scope)[:5]:5} lucro {f(pr):>10} PL {f(eq):>10} "
+                f"DVA JCP {f(jcp):>9} div {f(div):>10} | FRE JCP {f(fjcp):>9} div {f(fdiv):>10} | ações DFP {f(s_on)}/{f(s_pn)}")
         for crit, reason, detail in q(
             conn,
             "SELECT criterion, detail->>'reason', detail::text FROM screen_criterion"
@@ -254,96 +255,111 @@ def diagnostics(conn, today):
         out(f"   {names[cvm][:44]:44} {n0} de {nn} anos com proventos zero")
 
 
-def sensitivity(conn, cfg, today, by_company):
-    section("Sensibilidade das regras em discussão (retrato de hoje)")
-
-    # 1. Payout: média de 5 anos (atual) x cada ano dentro da faixa
-    lo, hi = D(str(cfg["screen.payout_min"])), D(str(cfg["screen.payout_max"]))
-    diff = []
-    total = 0
-    for cvm, st, detail in q(
-        conn,
-        "SELECT cvm_code, status, detail FROM screen_criterion WHERE as_of=%s AND criterion='payout_medio' AND status <> 'unavailable'",
-        (today,),
-    ):
-        pays = [D(v) for v in detail["payout"].values()]
-        mean_ok = st == "pass"
-        each_ok = all(lo <= p <= hi for p in pays)
-        total += 1
-        if mean_ok != each_ok:
-            diff.append((cvm, mean_ok, each_ok, min(pays), max(pays)))
-    out(f"Payout: {total} empresas avaliáveis; média passa e 'todo ano' reprova (ou o inverso) em {len(diff)}")
+def fre_report(conn, cfg, today):
     names = dict(q(conn, "SELECT cvm_code, name FROM company"))
-    for cvm, m, e, mn, mx in diff[:10]:
-        out(f"   {names[cvm][:36]:36} média {'passa' if m else 'reprova'} | todo ano {'passa' if e else 'reprova'} | min {float(mn):.2f} max {float(mx):.2f}")
 
-    # 2. Outlier: mediana dos 5 anos anteriores (atual) x janela de 5 anos incluindo o próprio ano
-    mult = D(str(cfg["outlier.multiple"]))
-    my = int(cfg["outlier.median_years"])
-    mh = int(cfg["outlier.min_history_years"])
-    totals = defaultdict(dict)
-    for cvm, ref, jcp, div in q(conn, "SELECT cvm_code, reference_date, jcp, dividends FROM indicator_annual WHERE jcp IS NOT NULL AND dividends IS NOT NULL"):
-        totals[cvm][ref.year] = jcp + div
-    cur, alt = set(), set()
-    for cvm, t in totals.items():
-        for y, tot in t.items():
-            prev = [t[k] for k in range(y - my, y) if k in t]
-            if len(prev) >= mh:
-                med = statistics.median(prev)
-                if med > 0 and tot > mult * med:
-                    cur.add((cvm, y))
-            incl = [t[k] for k in range(y - my + 1, y + 1) if k in t]
-            if len(incl) >= mh:
-                med = statistics.median(incl)
-                if med > 0 and tot > mult * med:
-                    alt.add((cvm, y))
-    out(f"Outlier: sem o próprio ano {len(cur)} marcados | incluindo o próprio ano {len(alt)} | só no primeiro {len(cur - alt)} | só no segundo {len(alt - cur)}")
-    out("   (a mediana que inclui o próprio ano torna difícil passar de 2x; observar se o segundo perde os casos extremos)")
-
-    # 3. Dividendo por ação: payout x LPA (atual) x total / ações (2020+)
-    events = compute._applied_events(conn)
-    refs = {c: mapping.reference_security(s) for c, s in by_company.items()}
-    rows = defaultdict(dict)
-    for cvm, ref, profit, jcp, div, lpa_on, lpa_pn, s_on, s_pn in q(
+    section("FRE: documentos e linhas carregadas por ano")
+    out("ano   docs  capital  desdobr  dividendos")
+    for y, docs, cap, spl, div in q(
         conn,
-        "SELECT cvm_code, reference_date, profit, jcp, dividends, lpa_on, lpa_pn, shares_on, shares_pn"
-        " FROM indicator_annual WHERE reference_date >= '2020-01-01'",
+        """SELECT extract(year FROM f.received_date)::int, count(DISTINCT f.id),
+                  count(DISTINCT f.id) FILTER (WHERE EXISTS (SELECT 1 FROM fre_capital c WHERE c.filing_id = f.id)),
+                  count(DISTINCT f.id) FILTER (WHERE EXISTS (SELECT 1 FROM fre_split c WHERE c.filing_id = f.id)),
+                  count(DISTINCT f.id) FILTER (WHERE EXISTS (SELECT 1 FROM fre_dividend c WHERE c.filing_id = f.id))
+           FROM filing f WHERE f.doc_type = 'FRE' AND f.has_lines GROUP BY 1 ORDER BY 1""",
     ):
-        rows[cvm][ref.year] = (ref, profit, jcp, div, lpa_on, lpa_pn, s_on, s_pn)
-    comparable = same = 0
-    differ = []
-    multi = 0
-    for cvm, ys in rows.items():
-        r = refs.get(cvm)
-        ev = events.get(r[1], []) if r else []
-        a, b = {}, {}
-        for y, (ref, profit, jcp, div, lpa_on, lpa_pn, s_on, s_pn) in ys.items():
-            if jcp is None or div is None or not profit or profit <= 0:
-                continue
-            tot = jcp + div
-            lpa = lpa_on if (r is None or r[0] == "on") else lpa_pn
-            f = corporate.cumulative_factor(ev, ref, today)
-            if lpa is not None:
-                a[y] = tot / profit * lpa / f
-            if s_on is not None and s_pn is not None and s_on + s_pn > 0:
-                b[y] = tot / (s_on + s_pn) / f
-            if s_on and s_pn:
-                multi += 1
-        def drops(d):
-            return {y for y in d if y - 1 in d and d[y] < d[y - 1]}
-        common = a.keys() & b.keys()
-        if len(common) >= 4:
-            comparable += 1
-            da, db = drops({y: a[y] for y in common}), drops({y: b[y] for y in common})
-            if da == db:
-                same += 1
-            else:
-                differ.append((cvm, sorted(da), sorted(db), bool(ys and any(v[6] and v[7] for v in ys.values()))))
-    out(f"Dividendo por ação (2020+): {comparable} empresas comparáveis; mesmas quedas nos dois métodos em {same}; diferem em {len(differ)}")
-    both = sum(1 for d in differ if d[3])
-    out(f"   das que diferem, {both} têm ON e PN (onde a aproximação payout x LPA é esperada falhar)")
-    for cvm, da, db, two in differ[:12]:
-        out(f"   {names[cvm][:36]:36} payout×LPA quedas {da} | total/ações quedas {db} | ON+PN {two}")
+        out(f"{y} {docs:>6} {cap:>8} {spl:>8} {div:>10}   (por ano de entrega do documento)")
+
+    section("FRE x DVA: proventos totais por exercício (JCP + dividendos)")
+    buckets = Counter()
+    both = []
+    only_fre = only_dva = 0
+    for cvm, ref, dva, fre_total in q(
+        conn,
+        """SELECT cvm_code, reference_date, coalesce(jcp + dividends, 0), fre_jcp + fre_dividends
+           FROM indicator_annual WHERE fre_dividends IS NOT NULL AND fre_jcp IS NOT NULL""",
+    ):
+        dva, fre_total = float(dva), float(fre_total)
+        if dva == 0 and fre_total == 0:
+            continue
+        if dva == 0:
+            only_fre += 1
+            buckets["DVA zero, FRE > 0"] += 1
+            continue
+        r = fre_total / dva
+        b = ("<0,5" if r < 0.5 else "0,5-0,9" if r < 0.9 else "0,9-1,1" if r <= 1.1
+             else "1,1-2" if r <= 2 else ">2")
+        buckets[b] += 1
+        both.append((abs(r - 1), cvm, ref, dva, fre_total))
+    out(f"exercícios com FRE e DVA: {dict(buckets)}")
+    out("razão FRE/DVA: perto de 1 = as fontes concordam; fora disso, investigar (maiores diferenças):")
+    for _, cvm, ref, dva, f in sorted(both, reverse=True)[:12]:
+        out(f"   {names[cvm][:36]:36} {ref} DVA {dva:>18,.0f} FRE {f:>18,.0f} razão {f / dva:,.2f}")
+    n_fre = q(conn, "SELECT count(*) FROM indicator_annual WHERE fre_dividends IS NOT NULL")[0][0]
+    n_all = q(conn, "SELECT count(*) FROM indicator_annual WHERE reference_date >= '2016-01-01'")[0][0]
+    out(f"exercícios (DFP) com proventos do FRE: {n_fre}; DFP desde 2016: {n_all}")
+    for y, n_y, f_y in q(
+        conn,
+        """SELECT extract(year FROM reference_date)::int, count(*), count(fre_dividends)
+           FROM indicator_annual WHERE reference_date >= '2014-01-01' GROUP BY 1 ORDER BY 1""",
+    ):
+        out(f"   {y}: {f_y} de {n_y} DFP com FRE")
+
+    section("Ações: FRE x DFP (escala; razão DFP/FRE no retrato mais próximo, exercícios 2020+)")
+    snaps = defaultdict(list)
+    cap_rows = defaultdict(list)
+    for fid, cvm, received, ctype, approved, common, pref in q(
+        conn,
+        """SELECT f.id, f.cvm_code, f.received_date, c.capital_type, c.approved_on, c.shares_common, c.shares_pref
+           FROM fre_capital c JOIN filing f ON f.id = c.filing_id""",
+    ):
+        cap_rows[cvm].append((fid, received, ctype, approved, common, pref))
+    for cvm, r in cap_rows.items():
+        snaps[cvm] = shares.snapshots_from_capital(r)
+    ratios = Counter()
+    odd = []
+    no_snap = 0
+    for cvm, ref, s_on, s_pn in q(
+        conn,
+        "SELECT cvm_code, reference_date, shares_on, shares_pn FROM indicator_annual"
+        " WHERE shares_on IS NOT NULL AND reference_date >= '2020-01-01'",
+    ):
+        got = shares.shares_at(snaps.get(cvm, []), [], ref, date(2100, 1, 1), int(cfg["shares.max_snapshot_gap_days"]))
+        if not got or got[0] + got[1] == 0:
+            no_snap += 1
+            continue
+        r = (s_on + s_pn) / (got[0] + got[1])
+        b = ("~1" if 0.8 <= r <= 1.25 else "~0,001 (DFP em milhares)" if 0.0008 <= r <= 0.00125
+             else "~1000 (FRE em milhares)" if 800 <= r <= 1250 else "outro")
+        ratios[b] += 1
+        if b != "~1":
+            odd.append((cvm, ref, r))
+    out(f"{dict(ratios)}; sem retrato do FRE perto: {no_snap}")
+    for cvm, ref, r in sorted(odd, key=lambda x: -abs(math.log(max(x[2], 1e-12))))[:12]:
+        out(f"   {names[cvm][:40]:40} {ref} razão DFP/FRE {r:,.4f}")
+    cover = q(
+        conn,
+        """SELECT count(*) FROM indicator_annual a WHERE a.reference_date >= '2014-01-01'""",
+    )[0][0]
+    ok = 0
+    for cvm, ref in q(conn, "SELECT cvm_code, reference_date FROM indicator_annual WHERE reference_date >= '2014-01-01'"):
+        if shares.shares_at(snaps.get(cvm, []), [], ref, date(2100, 1, 1), int(cfg["shares.max_snapshot_gap_days"])):
+            ok += 1
+    out(f"exercícios desde 2014 com ações pelo FRE: {ok} de {cover}")
+
+    section("Eventos por empresa (FRE + COTAHIST)")
+    for src, basis, n in q(conn, "SELECT source, date_basis, count(*) FROM company_event GROUP BY 1, 2 ORDER BY 1, 2"):
+        out(f"{src:9} {basis:9} {n}")
+    out("-- FRE sem salto de preço correspondente (data de aprovação) e COTAHIST sem FRE:")
+    for tk in ("WEGE3", "ITUB4", "BBAS3", "TAEE11", "RENT3", "LREN3", "PETR4", "VALE3", "ABEV3"):
+        evs = q(
+            conn,
+            """SELECT e.event_date, e.factor, e.source, e.date_basis, e.event_type
+               FROM company_event e JOIN company_security cs ON cs.cvm_code = e.cvm_code
+               WHERE cs.ticker = %s GROUP BY 1, 2, 3, 4, 5 ORDER BY 1""",
+            (tk,),
+        )
+        out(f"{tk:7} " + "; ".join(f"{d} x{float(f):.4g} {src}/{basis}" for d, f, src, basis, _ in evs))
 
 
 if __name__ == "__main__":

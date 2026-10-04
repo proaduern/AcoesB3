@@ -49,6 +49,8 @@ jobs:
           time acoesb3 cvm --doc FCA
       - name: Carga - DFP
         run: time acoesb3 cvm --doc DFP
+      - name: Carga - FRE
+        run: time acoesb3 cvm --doc FRE
       - name: Carga - COTAHIST
         run: time acoesb3 cotahist
       - name: Compute
@@ -79,6 +81,8 @@ jobs:
         run: test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
       - name: Recarrega DFP (contas de DVA de banco e seguradora)
         run: time acoesb3 cvm --doc DFP --force
+      - name: Carga - FRE
+        run: time acoesb3 cvm --doc FRE
       - name: Compute
         run: time acoesb3 compute
       - name: Relatório

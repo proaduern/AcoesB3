@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 
-_TICKER = re.compile(r"^([A-Z]{4})(\d{1,2})$")
+# A raiz tem 4 caracteres e pode ter dígito (B3SA3).
+_TICKER = re.compile(r"^([A-Z][A-Z0-9]{3})(\d{1,2})$")
 
 
 def ticker_root(ticker: str) -> str | None:

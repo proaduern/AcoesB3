@@ -39,6 +39,7 @@ class ScreenParams:
     min_valid_years: int
     liq_min_volume: Decimal
     liq_min_presence: Decimal
+    max_data_age_days: int
 
     @classmethod
     def from_config(cls, cfg: dict) -> ScreenParams:
@@ -71,6 +72,7 @@ class ScreenParams:
             min_valid_years=integer("outlier.min_valid_years"),
             liq_min_volume=num("liquidity.min_avg_volume"),
             liq_min_presence=num("liquidity.min_presence"),
+            max_data_age_days=integer("screen.max_data_age_days"),
         )
 
 
@@ -88,10 +90,8 @@ class YearData:
     jcp: Decimal | None = None
     dividends: Decimal | None = None
     dividends_source: str | None = None
-    lpa: Decimal | None = None  # LPA da classe de referência, como publicado
     market_cap: Decimal | None = None
-    shares: int | None = None  # ações em circulação no fim do exercício (CVM, 2020+)
-    split_factor: Decimal = D(1)  # eventos entre a entrega e a data-base (base do LPA publicado)
+    shares: int | None = None  # ações no fim do exercício (FRE, ajustadas por eventos)
     shares_factor: Decimal = D(1)  # eventos entre o fim do exercício e a data-base (base de shares)
     outlier: bool = False  # suspeito e não liberado pelo usuário: fora das médias
 
@@ -344,54 +344,40 @@ def payout_mean(years, last, p: ScreenParams) -> Criterion:
     )
 
 
-def _dps(y: YearData) -> tuple[Decimal, str] | None:
-    """Dividendo por ação do ano na base de ações da data-base, e o método usado.
-
-    ``exact``: total declarado / ações em circulação (CVM, 2020 em diante).
-    ``estimated``: payout x LPA da classe de referência (exato com uma só classe; com ON e PN
-    é aproximação). Ano de outlier não tem DPS.
-    """
+def _dps(y: YearData) -> Decimal | None:
+    """Dividendo por ação do ano: total declarado / ações no fim do exercício, levado à base de
+    ações da data-base pelos eventos societários posteriores. Ano de outlier não tem DPS."""
     total = _total(y)
-    if y.outlier or total is None:
+    if y.outlier or total is None or not y.shares:
         return None
-    if y.shares:
-        return total / y.shares / y.shares_factor, "exact"
-    if y.profit is not None and y.profit > 0 and y.lpa is not None:
-        return total / y.profit * y.lpa / y.split_factor, "estimated"
-    return None
+    return total / y.shares / y.shares_factor
 
 
 def dps_drops(years, last, p: ScreenParams) -> Criterion:
     """Quedas do dividendo por ação na janela (ver ``_dps``).
 
-    A CVM não republica o LPA/dividendo antigo ajustado, então os eventos societários
-    detectados levam cada ano à base de ações da data-base. Comparações com ano de prejuízo
-    (método estimado), de outlier ou entre métodos diferentes são puladas.
+    Comparações com ano de outlier ou sem ações são puladas; exige ``dps_min_pairs`` pares.
     """
     name = "queda_dividendo_por_acao"
     thr = f"<= {p.dps_max_drops} quedas em {p.dps_window} anos"
     keys, bad = _window_or_unavailable(name, thr, years, last, p.dps_window)
     if bad:
         return bad
-    dps: dict[int, tuple[Decimal, str]] = {}
-    for k in keys:
-        v = _dps(years[k])
-        if v is not None:
-            dps[k] = v
-    pairs = [(k - 1, k) for k in keys if (k - 1) in dps and k in dps and dps[k - 1][1] == dps[k][1]]
+    dps = {k: v for k in keys if (v := _dps(years[k])) is not None}
+    pairs = [(k - 1, k) for k in keys if (k - 1) in dps and k in dps]
     if len(pairs) < p.dps_min_pairs:
         return _unavailable(name, thr, "data", comparable_pairs=len(pairs), needed=p.dps_min_pairs)
-    drops = [k for a, k in pairs if dps[k][0] < dps[a][0] * (1 - p.dps_tolerance)]
+    drops = [k for a, k in pairs if dps[k] < dps[a] * (1 - p.dps_tolerance)]
     return Criterion(
         name,
         "pass" if len(drops) <= p.dps_max_drops else "fail",
         D(len(drops)),
         thr,
         {
-            "dps": {k: str(v[0]) for k, v in dps.items()},
-            "method": {k: v[1] for k, v in dps.items()},
+            "dps": {k: str(v) for k, v in dps.items()},
             "drop_years": drops,
             "comparable_pairs": len(pairs),
+            "sources": {k: years[k].dividends_source for k in keys},
             **_source_detail(years, keys),
         },
     )
@@ -416,7 +402,11 @@ def liquidity(liq: Liquidity | None, p: ScreenParams) -> Criterion:
 
 
 def evaluate(
-    years: dict[int, YearData], liq: Liquidity | None, p: ScreenParams, excluded: bool = False
+    years: dict[int, YearData],
+    liq: Liquidity | None,
+    p: ScreenParams,
+    excluded: bool = False,
+    as_of: date | None = None,
 ) -> Result:
     if excluded:
         return Result("excluded", None, None, [])
@@ -428,6 +418,9 @@ def evaluate(
             [_unavailable("lucro_positivo", "", "history", missing_years=[])],
         )
     last = max(years)
+    if as_of is not None and (as_of - years[last].reference_date).days > p.max_data_age_days:
+        # A empresa parou de entregar DFP: não avaliar com dados velhos.
+        return Result("stale", years[last].reference_date, None, [])
     criteria = [
         profit_positive(years, last, p),
         roe_mean(years, last, p),

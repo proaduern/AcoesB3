@@ -16,3 +16,13 @@ Arquivos CVM gravados em latin-1, como na origem.
 
 Header (00) e trailer (99) do COTAHIST: o log do Actions corta espaços no fim da linha;
 foram completados com espaços até 245 posições, que é o conteúdo original desses campos (FILLER).
+
+## FRE (verificado em 04/10/2026)
+
+- `fre_cia_aberta_capital_social_2010.csv`, `..._capital_social_desdobramento_2018.csv`,
+  `..._distribuicao_dividendos_classe_acao_2018.csv`: cabeçalho e primeiras linhas dos arquivos
+  reais (BB, Telebras, Fictor), reconstruídos a partir da saída da sonda do Actions, sem edição
+  dos valores.
+- `fre_cia_aberta_2010.csv`: as duas primeiras linhas do índice do FRE 2010 (BB, versões 1 e 2).
+  A linha da versão 11 (ID 9670), que liga o `capital_social` ao documento, **não** foi impressa
+  pela sonda; os testes de carga acrescentam essa linha de índice sintética.

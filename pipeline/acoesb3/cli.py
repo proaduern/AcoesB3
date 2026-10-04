@@ -139,7 +139,10 @@ def cmd_compute(conn, a) -> None:
     fns = {
         "annual": lambda: compute.build_annual(conn),
         "outliers": lambda: compute.build_outliers(conn, cfg),
-        "events": lambda: compute.detect_events(conn, cfg),
+        "events": lambda: {
+            **compute.detect_events(conn, cfg),
+            **compute.build_company_events(conn, cfg),
+        },
         "screens": lambda: compute.build_screens(conn, cfg),
     }
     for step in COMPUTE_STEPS:
@@ -194,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("migrate")
     sub.add_parser("cad")
     c = sub.add_parser("cvm")
-    c.add_argument("--doc", required=True, choices=["DFP", "ITR", "FCA"])
+    c.add_argument("--doc", required=True, choices=["DFP", "ITR", "FCA", "FRE"])
     for s in (c, sub.add_parser("cotahist")):
         s.add_argument("--from-year", type=int)
         s.add_argument("--to-year", type=int)

@@ -103,7 +103,7 @@ def test_mediana_zero_nao_permite_concluir():
     assert screen.find_outliers(totals, D(2), 5, 3) == {}
 
 
-# --- Extração por plano de contas (linhas reais da DFP 2024) -----------------
+# --- Extração conta a conta (linhas reais da DFP 2024) ------------------------
 
 RULES = [
     cvm.AccountRule("DRE", "3.09", True),
@@ -136,7 +136,7 @@ def real_lines(cvm_code):
 
 
 def test_weg_plano_comum():
-    a = indicators.extract_annual(real_lines(5410), (4196000000, 0, 0, 0))
+    a = indicators.extract_annual(real_lines(5410), consolidated=True)
     assert a.plan == "comum"
     assert a.profit == D("6042593000")  # conferido pelo usuário
     assert a.equity == D("23125217000") - D("920996000")
@@ -145,7 +145,7 @@ def test_weg_plano_comum():
 
 
 def test_itau_plano_banco_usa_2_08_e_dva_7_09():
-    a = indicators.extract_annual(real_lines(19348), None)
+    a = indicators.extract_annual(real_lines(19348), consolidated=True)
     assert a.plan == "banco"
     assert a.profit == D("41085000000")  # conferido pelo usuário
     assert a.equity == D("221284000000") - D("10194000000")
@@ -154,34 +154,99 @@ def test_itau_plano_banco_usa_2_08_e_dva_7_09():
 
 
 def test_bb_seguridade_plano_seguradora_usa_dva_7_11():
-    a = indicators.extract_annual(real_lines(23159), None)
+    a = indicators.extract_annual(real_lines(23159), consolidated=True)
     assert a.plan == "seguradora"
     assert a.profit == D("8703353000")  # conferido pelo usuário
     assert a.equity == D("9695421000")
     assert (a.jcp, a.dividends) == (D(0), D("7111000000"))
 
 
+def test_plano_misto_do_banco_do_brasil_dre_comum_balanco_e_dva_de_banco():
+    # Diagnóstico do Actions: BB 2020+ tem lucro em 3.11.01, PL em 2.08 e proventos em 7.09.04.
+    lines = {
+        ("DRE", "3.11"): D(10),
+        ("DRE", "3.11.01"): D(9),
+        ("BPP", "2.08"): D(100),
+        ("BPP", "2.08.09"): D(4),
+        ("DVA", "7.09.04.01"): D(1),
+        ("DVA", "7.09.04.02"): D(2),
+    }
+    a = indicators.extract_annual(lines, consolidated=True)
+    assert a.plan == "banco"
+    assert (a.profit, a.equity, a.jcp, a.dividends) == (D(9), D(96), D(1), D(2))
+
+
+def test_escopo_individual_usa_lucro_total_e_nao_subtrai_nao_controladores():
+    # Diagnóstico do Actions: 962 DFP individuais só têm 3.09 e 3.11 (sem 3.xx.01).
+    lines = {
+        ("DRE", "3.09"): D(7),
+        ("DRE", "3.11"): D(8),
+        ("BPP", "2.03"): D(50),
+        ("DVA", "7.08.04.01"): D(1),
+        ("DVA", "7.08.04.02"): D(2),
+    }
+    a = indicators.extract_annual(lines, consolidated=False)
+    assert a.plan == "comum"
+    assert (a.profit, a.equity, a.jcp, a.dividends) == (D(8), D(50), D(1), D(2))
+    # o mesmo documento tratado como consolidado fica indisponível (falta atribuição)
+    b = indicators.extract_annual(lines, consolidated=True)
+    assert b.profit is None and "profit" in b.notes and b.equity is None
+
+
+def test_individual_de_seguradora_e_de_banco_escolhem_a_conta_do_plano():
+    seg = {("DRE", "3.11"): D(1), ("DRE", "3.13"): D(5), ("DVA", "7.11.04.01"): D(1),
+           ("DVA", "7.11.04.02"): D(1), ("BPP", "2.03"): D(9)}  # fmt: skip
+    assert indicators.extract_annual(seg, consolidated=False).profit == D(5)
+    banco = {("DRE", "3.09"): D(6), ("DRE", "3.11"): D(1), ("BPP", "2.08"): D(70)}
+    a = indicators.extract_annual(banco, consolidated=False)
+    assert (a.plan, a.profit, a.equity) == ("banco", D(6), D(70))
+
+
+def test_duas_contas_de_lucro_dos_controladores_desempata_pelo_plano_ou_falha():
+    lines = {("DRE", "3.09.01"): D(1), ("DRE", "3.11.01"): D(2), ("BPP", "2.03"): D(5),
+             ("BPP", "2.03.09"): D(0)}  # fmt: skip
+    assert indicators.extract_annual(lines, consolidated=True, forced_plan="comum").profit == D(2)
+    assert indicators.extract_annual(lines, consolidated=True).profit is None  # sem plano: ambíguo
+
+
 def test_conta_ausente_vira_indisponivel_nao_zero():
     lines = real_lines(5410)
     del lines[("DVA", "7.08.04.01")]
-    a = indicators.extract_annual(lines, None)
+    a = indicators.extract_annual(lines, consolidated=True)
     assert a.jcp is None and a.dividends is None and a.dividends_source is None
     assert "dividends" in a.notes
     del lines[("BPP", "2.03.09")]
-    assert indicators.extract_annual(lines, None).equity is None
+    b = indicators.extract_annual(lines, consolidated=True)
+    assert b.equity is None and "equity" in b.notes
 
 
 def test_sem_conta_de_lucro_nao_identifica_plano():
-    a = indicators.extract_annual({("BPP", "2.03"): D(1)}, None)
+    a = indicators.extract_annual({("BPP", "2.03"): D(1)}, consolidated=True)
     assert a.plan is None and a.profit is None and a.equity is None and "plan" in a.notes
 
 
 def test_plano_forcado_e_override_de_dividendos():
     lines = real_lines(5410)
-    a = indicators.extract_annual(lines, None, forced_plan="banco")
-    assert a.plan == "banco" and a.profit is None  # 3.09.01 não existe na WEG
-    b = indicators.extract_annual(lines, None, dividend_override=(D(1), D(2), "manual"))
+    a = indicators.extract_annual(lines, forced_plan="banco", consolidated=True)
+    assert a.plan == "banco" and a.profit == D("6042593000")  # só uma conta de lucro existe
+    b = indicators.extract_annual(lines, dividend_override=(D(1), D(2), "manual"))
     assert (b.jcp, b.dividends, b.dividends_source) == (D(1), D(2), "manual")
+
+
+def test_proventos_manual_fre_dva_nessa_ordem_e_o_fre_respeita_a_data():
+    d = indicators.choose_dividends
+    jcp, div = D(1), D(2)
+    fre = (D(10), D(20), date(2019, 6, 1))
+    assert d(jcp, div, "manual", *fre, as_of=date(2020, 1, 1)) == (jcp, div, "manual")
+    assert d(jcp, div, "dva", *fre, as_of=date(2020, 1, 1)) == (D(10), D(20), "fre")
+    assert d(jcp, div, "dva", *fre, as_of=date(2019, 1, 1)) == (
+        jcp,
+        div,
+        "dva",
+    )  # FRE ainda não saiu
+    assert d(None, None, None, *fre, as_of=date(2019, 1, 1)) == (None, None, None)
+    assert d(jcp, div, "dva", *fre, as_of=None) == (D(10), D(20), "fre")
+    assert d(None, None, None, None, None, None) == (None, None, None)
 
 
 # --- Mapeamento ticker -> empresa --------------------------------------------
@@ -241,6 +306,7 @@ P = screen.ScreenParams.from_config(
         "outlier.min_valid_years": 3,
         "liquidity.min_avg_volume": 1000000,
         "liquidity.min_presence": 0.90,
+        "screen.max_data_age_days": 730,
     }
 )
 LIQ_OK = screen.Liquidity(D(5_000_000), D("0.98"), 63)
@@ -248,7 +314,8 @@ LIQ_OK = screen.Liquidity(D(5_000_000), D("0.98"), 63)
 
 def good_years(first=2016, last=2025, **over):
     """Empresa saudável: lucro 100, PL 500 (ROE 20%), paga 50 (30 de dividendo + 20 de JCP),
-    LPA 1,00 constante, valor de mercado 800 (DY líquido = (30 + 17)/800 = 5,875%)."""
+    1000 ações (dividendo por ação 0,05 constante), valor de mercado 800
+    (DY líquido = (30 + 17)/800 = 5,875%)."""
     ys = {}
     for y in range(first, last + 1):
         ys[y] = screen.YearData(
@@ -261,7 +328,7 @@ def good_years(first=2016, last=2025, **over):
             jcp=D(20),
             dividends=D(30),
             dividends_source="dva",
-            lpa=D(1),
+            shares=1000,
             market_cap=D(800),
         )
     for y, changes in over.items():
@@ -394,53 +461,6 @@ def test_payout_ano_de_prejuizo_fica_fora_da_media():
     assert c.detail["loss_years"] == [2024] and c.value == D("0.5")
 
 
-def test_dps_cai_em_mais_de_3_anos_reprova():
-    ys = good_years()
-    # LPA/dividendo oscilando: queda em 2018, 2020, 2022, 2024
-    for y, lpa in zip(range(2016, 2026), (5, 6, 5, 6, 5, 6, 5, 6, 5, 6), strict=True):
-        ys[y].lpa = D(lpa)
-    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert c.detail["drop_years"] == [2018, 2020, 2022, 2024]
-    assert (c.status, c.value) == ("fail", D(4))
-
-
-def test_dps_exatamente_3_quedas_passa():
-    ys = good_years()
-    for y, lpa in zip(range(2016, 2026), (5, 6, 5, 6, 5, 6, 5, 6, 6, 6), strict=True):
-        ys[y].lpa = D(lpa)
-    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert c.detail["drop_years"] == [2018, 2020, 2022]
-    assert (c.status, c.value) == ("pass", D(3))
-
-
-def test_desdobramento_nao_gera_queda_falsa_de_dps():
-    # LPA publicado cai de 4 para 1 quando há desdobramento 4:1 em 2021 (depois da entrega de 2019)
-    ys = good_years()
-    for y in range(2016, 2021):
-        ys[y].lpa = D(4)
-        ys[y].split_factor = D(4)  # eventos entre a entrega e a data-base
-    for y in range(2021, 2026):
-        ys[y].lpa = D(1)
-    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert c.detail["drop_years"] == [] and c.status == "pass"
-    # sem o ajuste, a queda aparece
-    for y in range(2016, 2021):
-        ys[y].split_factor = D(1)
-    assert crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao").detail[
-        "drop_years"
-    ] == [2021]
-
-
-def test_dps_pula_comparacoes_com_outlier_e_exige_minimo_de_pares():
-    ys = good_years(y2020={"outlier": True})
-    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert c.detail["comparable_pairs"] == 7  # 9 pares menos os 2 que tocam 2020
-    many = good_years(**{f"y{y}": {"outlier": True} for y in (2017, 2019, 2021, 2023)})
-    assert (
-        crit(screen.evaluate(many, LIQ_OK, P), "queda_dividendo_por_acao").status == "unavailable"
-    )
-
-
 def test_liquidez():
     thin = screen.Liquidity(D(900_000), D("0.99"), 63)
     sporadic = screen.Liquidity(D(5_000_000), D("0.89"), 63)
@@ -466,51 +486,85 @@ def test_parametro_ausente_falha_em_vez_de_assumir_valor():
         screen.ScreenParams.from_config({"screen.roe_min": 0.1})
 
 
-# --- Dividendo por ação: total / ações (exato) x payout x LPA (estimado) -------
+# --- Dividendo por ação: total declarado / ações no fim do exercício ---------------
 
 
-def with_shares(ys, from_year, shares=1000):
-    for y in ys.values():
-        if y.year >= from_year:
-            y.shares = shares
-    return ys
+def set_shares(ys, values):
+    for y, v in zip(sorted(ys), values, strict=True):
+        ys[y].shares = v
 
 
-def test_dps_exato_usa_total_sobre_acoes_e_nao_precisa_de_lucro_positivo():
-    ys = with_shares(good_years(), 2016)
-    ys[2020].profit = D(
-        -5
-    )  # prejuízo: o método estimado pularia o ano; o exato não depende do lucro
+def test_dps_mais_de_3_quedas_reprova():
+    ys = good_years()
+    # ações oscilando com dividendo total igual: o dividendo por ação cai quando as ações sobem
+    set_shares(ys, (1000, 1100, 1000, 1100, 1000, 1100, 1000, 1100, 1000, 1100))
     c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert set(c.detail["method"].values()) == {"exact"}
-    assert c.detail["comparable_pairs"] == 9
-    assert c.detail["dps"][2020] == str(D(50) / D(1000))
+    assert c.detail["drop_years"] == [2017, 2019, 2021, 2023, 2025]
+    assert (c.status, c.value) == ("fail", D(5))
 
 
-def test_dps_pares_de_metodos_diferentes_sao_pulados():
-    # 2016-2019 estimado, 2020-2025 exato: o par 2019->2020 mistura métodos e não conta
-    ys = with_shares(good_years(), 2020)
+def test_dps_exatamente_3_quedas_passa():
+    ys = good_years()
+    set_shares(ys, (1000, 1100, 1000, 1100, 1000, 1100, 1000, 1000, 1000, 1000))
     c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert c.detail["method"][2019] == "estimated" and c.detail["method"][2020] == "exact"
-    assert c.detail["comparable_pairs"] == 8
+    assert c.detail["drop_years"] == [2017, 2019, 2021]
+    assert (c.status, c.value) == ("pass", D(3))
 
 
-def test_dps_exato_ajusta_por_evento_depois_do_fim_do_exercicio():
+def test_dps_ajusta_por_evento_depois_do_fim_do_exercicio():
     # desdobramento 2:1 em 2022: ações dobram de 1000 para 2000 e o dividendo total é igual
-    ys = with_shares(good_years(), 2016)
+    ys = good_years()
     for y in ys.values():
         y.shares = 1000 if y.year <= 2021 else 2000
         y.shares_factor = D(2) if y.year <= 2021 else D(1)
     c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
     assert c.detail["drop_years"] == [] and c.status == "pass"
-    for y in ys.values():  # sem o evento detectado, a queda de 2022 aparece
+    for y in ys.values():  # sem o evento conhecido, a queda de 2022 aparece
         y.shares_factor = D(1)
     c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
     assert c.detail["drop_years"] == [2022]
 
 
-def test_dps_exato_ano_de_outlier_nao_tem_dps():
-    ys = with_shares(good_years(), 2016)
-    ys[2023].outlier = True
+def test_dps_nao_depende_do_lucro():
+    ys = good_years(y2020={"profit": D(-5)})  # prejuízo com dividendo declarado
     c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
-    assert 2023 not in c.detail["dps"] and c.detail["comparable_pairs"] == 7
+    assert c.detail["comparable_pairs"] == 9 and 2020 in c.detail["dps"]
+
+
+def test_dps_pula_comparacoes_com_outlier_sem_acoes_e_exige_minimo_de_pares():
+    ys = good_years(y2020={"outlier": True})
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert 2020 not in c.detail["dps"] and c.detail["comparable_pairs"] == 7
+    ys = good_years(y2018={"shares": None})
+    assert (
+        crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao").detail["comparable_pairs"]
+        == 7
+    )
+    many = good_years(**{f"y{y}": {"shares": None} for y in (2017, 2019, 2021, 2023)})
+    c = crit(screen.evaluate(many, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert c.status == "unavailable"
+
+
+def test_dps_guarda_a_fonte_dos_proventos_de_cada_ano():
+    ys = good_years(y2024={"dividends_source": "fre"})
+    c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
+    assert c.detail["sources"][2024] == "fre" and c.detail["sources"][2023] == "dva"
+
+
+# --- Dados desatualizados (regra de 2 anos) ------------------------------------
+
+
+def test_empresa_que_parou_de_entregar_dfp_fica_stale():
+    ys = good_years(last=2021)
+    r = screen.evaluate(ys, LIQ_OK, P, as_of=date(2026, 10, 4))
+    assert r.status == "stale" and r.data_base == date(2021, 12, 31) and r.criteria == []
+
+
+def test_limite_de_730_dias_e_inclusivo():
+    ys = good_years()  # data-base 31/12/2025
+    assert screen.evaluate(ys, LIQ_OK, P, as_of=date(2027, 12, 31)).status != "stale"  # 730 dias
+    assert screen.evaluate(ys, LIQ_OK, P, as_of=date(2028, 1, 1)).status == "stale"  # 731 dias
+
+
+def test_sem_data_de_referencia_nao_aplica_a_regra():
+    assert screen.evaluate(good_years(last=2016), LIQ_OK, P).status != "stale"

@@ -7,7 +7,7 @@ from datetime import date
 
 import psycopg
 
-from . import cotahist, cvm
+from . import cotahist, cvm, fre
 from .db import get_config
 from .http import download
 
@@ -92,7 +92,9 @@ def _account_rules(conn) -> list[cvm.AccountRule]:
 
 
 def load_doc_year(conn: psycopg.Connection, doc_type: str, year: int, force: bool = False) -> dict:
-    """Carrega um zip anual de DFP, ITR ou FCA. Idempotente."""
+    """Carrega um zip anual de DFP, ITR, FCA ou FRE. Idempotente."""
+    if doc_type == "FRE":
+        return load_fre_year(conn, year, force)
     url = cvm.doc_url(doc_type, year)
     d = download(conn, f"cvm_{doc_type.lower()}", url, force=force)
     if d is None:
@@ -111,6 +113,130 @@ def load_doc_year(conn: psycopg.Connection, doc_type: str, year: int, force: boo
         result.update(_load_fca_securities(conn, members[f"{prefix}valor_mobiliario_{year}.csv"]))
     else:
         result.update(_load_statements(conn, doc_type, year, members))
+    conn.commit()
+    return result
+
+
+def load_fre_year(conn: psycopg.Connection, year: int, force: bool = False) -> dict:
+    """Zip anual do FRE: índice, capital social, desdobramentos e proventos por classe.
+
+    Os zips de 2025 em diante não trazem desdobramento nem dividendos (layout novo): o arquivo
+    ausente é registrado no resultado, não é erro.
+    """
+    url = cvm.doc_url("FRE", year)
+    d = download(conn, "cvm_fre", url, force=force)
+    if d is None:
+        return {"skipped": "arquivo inexistente"}
+    if d.content is None:
+        return {"skipped": "sem mudança"}
+    members = cvm.ZipMembers(d.content)
+    index = fre.parse_index(members[fre.member("", year)])
+    _upsert_filings(conn, index, d.source_file_id)
+    bounds = fre.Bounds(
+        int(get_config(conn, "fre.min_year")), int(get_config(conn, "fre.max_future_days"))
+    )
+    by_doc = {
+        doc_id: (fid, received)
+        for fid, doc_id, received in conn.execute(
+            "SELECT id, doc_id, received_date FROM filing"
+            " WHERE doc_type = 'FRE' AND doc_id = ANY(%s)",
+            ([r.doc_id for r in index],),
+        )
+    }
+    filing_ids = sorted(fid for fid, _ in by_doc.values())
+    result: dict = {"filings": len(index), "absent_files": [], "orphan_doc_ids": []}
+    with_data: set[int] = set()
+    with conn.cursor() as cur:
+        for table in ("fre_capital", "fre_split", "fre_dividend"):
+            cur.execute(f"DELETE FROM {table} WHERE filing_id = ANY(%s)", (filing_ids,))
+
+    def locate(doc_id: int):
+        if doc_id not in by_doc:
+            result["orphan_doc_ids"].append(doc_id)
+            return None
+        return by_doc[doc_id]
+
+    cap_name = fre.member("capital_social", year)
+    if cap_name in members:
+        capital = []
+        for r in fre.parse_capital(members[cap_name]):
+            hit = locate(r.doc_id)
+            if hit:
+                fid, received = hit
+                capital.append(
+                    (
+                        fid,
+                        r.capital_type,
+                        bounds.ok(r.approved_on, received),
+                        r.common,
+                        r.preferred,
+                        r.total,
+                    )
+                )
+                with_data.add(fid)
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO fre_capital (filing_id, capital_type, approved_on, shares_common,"
+                " shares_pref, shares_total) VALUES (%s, %s, %s, %s, %s, %s)",
+                capital,
+            )
+        result["capital"] = len(capital)
+    else:
+        result["absent_files"].append(cap_name)
+
+    split_name = fre.member("capital_social_desdobramento", year)
+    if split_name in members:
+        splits, bad_dates = [], 0
+        for r in fre.parse_splits(members[split_name]):
+            hit = locate(r.doc_id)
+            if hit:
+                fid, received = hit
+                when = bounds.ok(r.approved_on, received)
+                bad_dates += r.approved_on is not None and when is None
+                splits.append(
+                    (fid, r.event_type, when, r.total_before, r.total_after, r.common_before,
+                     r.common_after, r.pref_before, r.pref_after)
+                )  # fmt: skip
+                with_data.add(fid)
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO fre_split (filing_id, event_type, approved_on, total_before,"
+                " total_after, common_before, common_after, pref_before, pref_after)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                splits,
+            )
+        result["splits"] = len(splits)
+        result["splits_invalid_dates"] = bad_dates
+    else:
+        result["absent_files"].append(split_name)
+
+    div_name = fre.member("distribuicao_dividendos_classe_acao", year)
+    if div_name in members:
+        parsed, skipped = fre.parse_dividends(members[div_name])
+        dividends = []
+        for r in parsed:
+            hit = locate(r.doc_id)
+            if hit:
+                fid, received = hit
+                dividends.append(
+                    (fid, r.exercise_start, r.exercise_end, r.share_type, r.share_class, r.kind,
+                     r.amount, bounds.ok(r.paid_on, received))
+                )  # fmt: skip
+                with_data.add(fid)
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO fre_dividend (filing_id, exercise_start, exercise_end, share_type,"
+                " share_class, kind, amount, paid_on) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                dividends,
+            )
+        result["dividends"] = len(dividends)
+        result["dividends_skipped"] = skipped
+    else:
+        result["absent_files"].append(div_name)
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE filing SET has_lines = true WHERE id = ANY(%s)", (sorted(with_data),))
+    result["orphan_doc_ids"] = sorted(set(result["orphan_doc_ids"]))
     conn.commit()
     return result
 
