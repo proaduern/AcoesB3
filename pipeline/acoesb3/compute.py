@@ -53,6 +53,10 @@ def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
     """Um registro de indicator_annual por versão de DFP com contas. Idempotente."""
     cfg = cfg or load_config(conn)
     fre_div = _fre_dividends(conn, cfg)
+    scale = (
+        Decimal(str(cfg["fre.scale_mismatch_min"])),
+        Decimal(str(cfg["fre.scale_mismatch_max"])),
+    )
     forced = dict(
         conn.execute("SELECT cvm_code, plan FROM company_class_override WHERE plan IS NOT NULL")
     )
@@ -94,11 +98,13 @@ def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
             grp = list(grp)
             lines = {(s, c): v for _, s, c, v, _ in grp if (s, c) in _NEEDED_SET}
             scope = grp[0][4]  # uma carga grava um só escopo por documento
-            rows.append(_annual_row(fid, filings, lines, shares, forced, overrides, scope, fre_div))
+            rows.append(
+                _annual_row(fid, filings, lines, shares, forced, overrides, scope, fre_div, scale)
+            )
             seen.add(fid)
     # DFP com contas mas sem nenhuma das linhas lidas: registrar tudo como indisponível.
     for fid in filings.keys() - seen:
-        rows.append(_annual_row(fid, filings, {}, shares, forced, overrides, None, fre_div))
+        rows.append(_annual_row(fid, filings, {}, shares, forced, overrides, None, fre_div, scale))
     with conn.cursor() as cur:
         cur.executemany(
             """
@@ -130,7 +136,17 @@ def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
     return {"annual_rows": len(rows), "plans": dict(plans), "unavailable": missing}
 
 
-def _annual_row(fid, filings, lines, shares, forced, overrides, consolidated, fre_div):
+def _annual_row(
+    fid,
+    filings,
+    lines,
+    shares,
+    forced,
+    overrides,
+    consolidated,
+    fre_div,
+    scale=(Decimal(500), Decimal(2000)),
+):
     cvm, ref = filings[fid]
     a = indicators.extract_annual(
         lines, shares.get(fid), forced.get(cvm), overrides.get((cvm, ref)), consolidated
@@ -139,6 +155,15 @@ def _annual_row(fid, filings, lines, shares, forced, overrides, consolidated, fr
         consolidated
     ]
     fre = fre_div.get((cvm, ref), (None, None, None))
+    if (
+        a.dividends_source == "dva"
+        and a.jcp is not None
+        and fre[0] is not None
+        and indicators.scale_mismatch(a.jcp + a.dividends, fre[0] + fre[1], *scale)
+    ):
+        a.jcp = a.dividends = a.dividends_source = None
+        fre = (None, None, None)
+        a.notes["dividends"] = "FRE e DVA divergem por ~1000x: escala incerta, ano indisponível"
     return (
         fid, cvm, ref, a.plan, a.profit, a.equity, a.jcp, a.dividends, a.dividends_source,
         a.lpa_on, a.lpa_pn, a.shares_on, a.shares_pn, Jsonb(a.notes), *fre,

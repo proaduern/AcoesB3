@@ -582,3 +582,45 @@ def test_resumo_da_etapa_aceita_datas_e_decimais(conn):
     assert detail["quando"] == date(2020, 1, 2)
     saved = conn.execute("SELECT status, detail FROM collection_run WHERE job = 'teste'").fetchone()
     assert saved == ("ok", {"quando": "2020-01-02", "valor": "1.5"})
+
+
+def test_escala_incerta_entre_fre_e_dva_deixa_o_ano_indisponivel(conn):
+    # DFP individual sintética com DVA de R$ 3,0 mi e FRE do mesmo exercício de R$ 3,0 bi
+    lines = {
+        ("DRE", "3.11"): D(10), ("BPP", "2.03"): D(50),
+        ("DVA", "7.08.04.01"): D(1_000_000), ("DVA", "7.08.04.02"): D(2_000_000),
+    }  # fmt: skip
+    insert_dfp_lines(conn, 301, lines, consolidated=False)
+    insert_dfp_lines(conn, 302, lines, consolidated=False)  # controle: FRE concorda
+    sf = conn.execute("SELECT id FROM source_file LIMIT 1").fetchone()[0]
+    for cvm, jcp, div in ((301, 1_000_000_000, 2_000_000_000), (302, 1_100_000, 2_000_000)):
+        fid = conn.execute(
+            "INSERT INTO filing (doc_type, cvm_code, cnpj, reference_date, version, doc_id,"
+            " received_date, source_file_id, has_lines) VALUES ('FRE', %s, %s, '2025-01-01', 1,"
+            " %s, '2025-05-30', %s, true) RETURNING id",
+            (cvm, f"{cvm:014d}", 9000 + cvm, sf),
+        ).fetchone()[0]
+        for kind, amount in (("Juros Sobre Capital Próprio", jcp), ("Dividendo Obrigatório", div)):
+            conn.execute(
+                "INSERT INTO fre_dividend (filing_id, exercise_start, exercise_end, share_type,"
+                " share_class, kind, amount) VALUES (%s, '2024-01-01', '2024-12-31', 'Ordinária',"
+                " '', %s, %s)",
+                (fid, kind, amount),
+            )
+    conn.commit()
+    compute.build_annual(conn)
+    rows = {
+        r[0]: r[1:]
+        for r in conn.execute(
+            "SELECT cvm_code, jcp, dividends, dividends_source, fre_jcp, notes->>'dividends'"
+            " FROM indicator_annual WHERE cvm_code IN (301, 302)"
+        )
+    }
+    assert rows[301] == (
+        None,
+        None,
+        None,
+        None,
+        "FRE e DVA divergem por ~1000x: escala incerta, ano indisponível",
+    )
+    assert rows[302][:4] == (D(1_000_000), D(2_000_000), "dva", D(1_100_000))

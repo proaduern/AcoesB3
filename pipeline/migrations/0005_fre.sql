@@ -83,5 +83,7 @@ INSERT INTO app_config (key, value, description) VALUES
  ('shares.max_snapshot_gap_days', '550', 'Distância máxima entre o fim do exercício e a entrega do FRE usado para contar as ações'),
  ('events.match_window_days', '200', 'Evento do FRE (data de aprovação) casa com um salto do COTAHIST até esta quantidade de dias depois'),
  ('events.match_tolerance', '0.08', 'Diferença relativa máxima entre o fator do FRE e o do salto de preço para casarem'),
+ ('fre.scale_mismatch_min', '500', 'FRE e DVA que diferem por um fator entre este valor e o seguinte (ou o inverso) têm escala incerta: o ano fica indisponível'),
+ ('fre.scale_mismatch_max', '2000', 'Limite superior do fator de escala incerta entre FRE e DVA'),
  ('events.dedupe_days', '45', 'Eventos do FRE com o mesmo fator (diferença de até 0,5%) e aprovação com até esta quantidade de dias de distância são o mesmo evento reapresentado')
 ON CONFLICT DO NOTHING;

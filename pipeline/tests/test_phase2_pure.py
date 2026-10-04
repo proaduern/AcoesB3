@@ -568,3 +568,13 @@ def test_limite_de_730_dias_e_inclusivo():
 
 def test_sem_data_de_referencia_nao_aplica_a_regra():
     assert screen.evaluate(good_years(last=2016), LIQ_OK, P).status != "stale"
+
+
+def test_escala_incerta_entre_fre_e_dva():
+    sm = indicators.scale_mismatch
+    lo, hi = D(500), D(2000)
+    assert sm(D(329_693_000), D(329_693), lo, hi)  # caso real: Whirlpool 2010 (FRE em milhares)
+    assert sm(D(1_006_000), D(733_838_521), lo, hi)  # caso real: Caixa Seguridade 2021
+    assert not sm(D(100), D(110), lo, hi)  # fontes concordam
+    assert not sm(D(100), D(300), lo, hi)  # diferença normal (declarado x pago)
+    assert not sm(D(0), D(5), lo, hi) and not sm(None, D(5), lo, hi) and not sm(D(5), None, lo, hi)

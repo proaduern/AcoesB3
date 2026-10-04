@@ -193,3 +193,13 @@ def choose_dividends(
     if jcp is not None and dividends is not None:
         return jcp, dividends, source or "dva"
     return None, None, None
+
+
+def scale_mismatch(dva_total, fre_total, low: Decimal, high: Decimal) -> bool:
+    """FRE e DVA do mesmo exercício diferem por ~1000x (ou o inverso): uma das duas fontes está
+    na escala errada (a CVM mistura R$ e R$ mil) e não há como saber qual. Só vale quando as duas
+    são positivas."""
+    if not dva_total or not fre_total or dva_total <= 0 or fre_total <= 0:
+        return False
+    ratio = fre_total / dva_total
+    return low <= ratio <= high or low <= 1 / ratio <= high
