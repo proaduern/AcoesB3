@@ -216,6 +216,20 @@ def cmd_watch(conn, a) -> None:
     elif w == "list":
         for role, seg, cvm, name, st in watch.listing(conn):
             print(f"  {role:8} {seg:12} {cvm:>6} {name[:44]:44} filtro={st}")
+    elif w == "explain":
+        for cvm in a.cvm:
+            e = watch.explain(conn, cvm)
+            print(f"== {cvm} retrato de {e['as_of']}")
+            for crit, st, value, thr, detail in e["criteria"]:
+                print(f"  {crit}: {st} valor={value} limite={thr}")
+                if crit == "queda_dividendo_por_acao":
+                    print("    ", json.dumps(detail, ensure_ascii=False, default=str))
+            print("  ano | total DVA/manual | total FRE | fonte | ações ON | ações PN | nota")
+            for ref, tot, fre, src, on, pn, note in e["annual"]:
+                print(f"  {ref} | {tot} | {fre} | {src} | {on} | {pn} | {note or ''}")
+            print("  eventos: data | fator | origem | base da data | tipo | antes | depois")
+            for ev in e["events"]:
+                print("  ", " | ".join(str(x) for x in ev))
     elif w == "candidates":
         for seg, rows in watch.candidates(conn, a.per_segment).items():
             print(f"== {seg}")
@@ -260,6 +274,8 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--role", choices=watch.ROLES, required=True)
     x.add_argument("--segment", required=True)
     x.add_argument("--note")
+    x = ws.add_parser("explain", help="critérios, fatos anuais e eventos de uma empresa")
+    x.add_argument("--cvm", type=int, action="append", required=True)
     x = ws.add_parser("remove")
     x.add_argument("--cvm", type=int, required=True)
     ws.add_parser("list")

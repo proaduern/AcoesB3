@@ -104,3 +104,29 @@ def candidates(conn: psycopg.Connection, per_segment: int = 6) -> dict[str, list
         hits.sort(key=lambda r: (order[r[3]], r[6], -(r[4] or 0)))
         out[seg] = hits[:per_segment]
     return out
+
+
+def explain(conn: psycopg.Connection, cvm_code: int) -> dict:
+    """Dados por trás do último retrato de uma empresa: critérios, fatos anuais e eventos."""
+    as_of = conn.execute(
+        "SELECT max(as_of) FROM screen_result WHERE cvm_code = %s", (cvm_code,)
+    ).fetchone()[0]
+    criteria = conn.execute(
+        "SELECT criterion, status, value, threshold, detail FROM screen_criterion"
+        " WHERE cvm_code = %s AND as_of = %s ORDER BY criterion",
+        (cvm_code, as_of),
+    ).fetchall()
+    annual = conn.execute(
+        """
+        SELECT reference_date, jcp + dividends, fre_jcp + fre_dividends, dividends_source,
+               shares_on, shares_pn, notes->>'dividends'
+        FROM indicator_annual WHERE cvm_code = %s ORDER BY reference_date
+        """,
+        (cvm_code,),
+    ).fetchall()
+    events = conn.execute(
+        "SELECT event_date, factor, source, date_basis, event_type, shares_before, shares_after"
+        " FROM company_event WHERE cvm_code = %s ORDER BY event_date",
+        (cvm_code,),
+    ).fetchall()
+    return {"as_of": as_of, "criteria": criteria, "annual": annual, "events": events}
