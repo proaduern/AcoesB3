@@ -1,0 +1,4 @@
+CNPJ_Companhia;Data_Referencia;Versao;ID_Documento;Nome_Companhia;ID_Capital_Social_Desdobramento;Data_Aprovacao;Tipo_Evento;Quantidade_Acoes_Ordinarias_Antes_Aprovacao;Quantidade_Acoes_Preferenciais_Antes_Aprovacao;Quantidade_Total_Acoes_Antes_Aprovacao;Quantidade_Acoes_Ordinarias_Depois_Aprovacao;Quantidade_Acoes_Preferenciais_Depois_Aprovacao;Quantidade_Total_Acoes_Depois_Aprovacao
+00.336.701/0001-04;2018-01-01;10;82472;TELEC BRASILEIRAS S.A. TELEBRAS;21395;2010-12-03;Grupamento;886959131950;210029997060;1096989129010;88695913;21002999;109698912
+00.336.701/0001-04;2018-01-01;10;82472;TELEC BRASILEIRAS S.A. TELEBRAS;21396;2016-04-04;Grupamento;88695913;21002999;109698912;9743971;2100299;11844270
+00.359.742/0001-08;2018-01-01;5;81590;FICTOR ALIMENTOS S.A.;21226;2016-04-29;Grupamento;313484914;0;313484914;62696983;0;62696983

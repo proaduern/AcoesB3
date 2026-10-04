@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import zipfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -104,6 +105,30 @@ class Line:
     period_end: date
     value: Decimal
     source_scale: str
+    description: str = ""  # DS_CONTA
+
+
+def ascii_upper(text: str) -> str:
+    """Maiúsculas sem acento, para comparar descrições de conta."""
+    import unicodedata
+
+    t = unicodedata.normalize("NFKD", text.upper())
+    return "".join(c for c in t if not unicodedata.combining(c))
+
+
+_PL_ROOT = re.compile(r"^2\.\d\d$")
+
+
+def pl_roots(records: list[dict[str, str]]) -> set[tuple[str, str, str, str]]:
+    """Contas de segundo nível do balanço cujo nome começa por "Patrimônio Líquido", por documento
+    (CD_CVM, DT_REFER, VERSAO, código). O código do PL muda entre bancos e seguradoras."""
+    return {
+        (r["CD_CVM"], r["DT_REFER"], r["VERSAO"], r["CD_CONTA"])
+        for r in records
+        if r["ORDEM_EXERC"] == LATEST
+        and _PL_ROOT.match(r["CD_CONTA"])
+        and ascii_upper(r["DS_CONTA"]).startswith("PATRIMONIO LIQUIDO")
+    }
 
 
 def scale_value(
@@ -125,13 +150,23 @@ def parse_statement(
     rules: list[AccountRule],
     per_share_prefixes: Iterable[str],
 ) -> Iterator[Line]:
-    """Linhas do exercício corrente (ORDEM_EXERC = ÚLTIMO) das contas selecionadas."""
+    """Linhas do exercício corrente (ORDEM_EXERC = ÚLTIMO) das contas selecionadas.
+
+    No balanço patrimonial, os filhos diretos do PL (achado por nome) também entram, para a
+    participação dos não controladores ser encontrada em qualquer plano de contas.
+    """
     per_share_prefixes = tuple(per_share_prefixes)
-    for r in read_csv(raw):
+    records = list(read_csv(raw))
+    roots = pl_roots(records) if statement == "BPP" else set()
+    for r in records:
         if r["ORDEM_EXERC"] != LATEST:
             continue
         code = r["CD_CONTA"]
-        if not any(rule.matches(statement, code) for rule in rules):
+        wanted = any(rule.matches(statement, code) for rule in rules)
+        if not wanted and roots and code.count(".") == 2:
+            parent = code.rsplit(".", 1)[0]
+            wanted = (r["CD_CVM"], r["DT_REFER"], r["VERSAO"], parent) in roots
+        if not wanted:
             continue
         if r["MOEDA"] != "REAL":
             raise ValueError(f"MOEDA inesperada: {r['MOEDA']!r} (CD_CVM {r['CD_CVM']})")
@@ -146,6 +181,7 @@ def parse_statement(
             period_end=date.fromisoformat(r["DT_FIM_EXERC"]),
             value=scale_value(r["VL_CONTA"], r["ESCALA_MOEDA"], code, per_share_prefixes),
             source_scale=r["ESCALA_MOEDA"],
+            description=r["DS_CONTA"],
         )
 
 

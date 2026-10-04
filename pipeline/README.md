@@ -20,7 +20,7 @@ Sem `TEST_DATABASE_URL`, os testes de carga no banco são pulados.
 export NEON_DATABASE_URL=...   # conexão direta (sem -pooler)
 acoesb3 migrate                # só aplica migrações (todo comando já faz isso)
 acoesb3 cad                    # cadastro de companhias da CVM
-acoesb3 cvm --doc FCA|DFP|ITR [--from-year 2010] [--to-year 2026] [--force]
+acoesb3 cvm --doc FCA|DFP|ITR|FRE [--from-year 2010] [--to-year 2026] [--force]
 acoesb3 cotahist [--from-year 2010] [--to-year 2026] [--force]
 acoesb3 daily                  # coleta diária (o que o workflow agendado roda)
 acoesb3 size                   # tamanho do banco por tabela
@@ -42,7 +42,7 @@ Reprocessar é seguro: a carga substitui o que veio do mesmo documento/arquivo.
 - `migrations/` — SQL aplicado em ordem, registrado em `schema_migration`.
 - `acoesb3/cvm.py`, `acoesb3/cotahist.py` — parsers (sem banco).
 - `acoesb3/load.py` — download + carga.
-- `acoesb3/indicators.py`, `screen.py`, `corporate.py`, `mapping.py` — cálculos da fase 2 (sem banco).
+- `acoesb3/indicators.py`, `screen.py`, `corporate.py`, `shares.py`, `mapping.py`, `fre.py` — cálculos e parsers da fase 2 (sem banco).
 - `acoesb3/compute.py`, `review.py` — fase 2 no banco e revisão manual.
 - `acoesb3/cli.py` — linha de comando.
 - `tests/fixtures/` — linhas reais dos arquivos oficiais (ver o README de lá).

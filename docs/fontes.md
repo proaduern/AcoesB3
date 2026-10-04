@@ -79,3 +79,40 @@ Verificado em 03/10/2026:
   exigiria contornar o CAPTCHA.
 - O conjunto de dados IPE (documentos eventuais) da CVM Dados Abertos também é semanal, então
   não serve para detectar entrega no mesmo dia.
+
+## CVM — FRE (Formulário de Referência)
+
+Verificado em 04/10/2026 baixando os arquivos reais pelo GitHub Actions (sonda `probe_fre.py`).
+
+- URL: `https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS/fre_cia_aberta_{ano}.zip`, de 2010 a 2026
+  (44 arquivos por zip). Os zips de 2010 a 2024 têm o mesmo conjunto de arquivos; **os de 2025 e 2026 (layout
+  novo, `CATEG_DOC = 'FRE WEB'`) não trazem** `capital_social_desdobramento`, `capital_social_aumento`,
+  `capital_social_reducao`, `distribuicao_dividendos`, `distribuicao_dividendos_classe_acao`,
+  `plano_recompra`, `informacao_financeira`, entre outros. O `capital_social` continua.
+- Índice `fre_cia_aberta_{ano}.csv`: mesmas colunas do DFP (`CNPJ_CIA;DT_REFER;VERSAO;DENOM_CIA;CD_CVM;CATEG_DOC;
+  ID_DOC;DT_RECEB;LINK_DOC`). `CATEG_DOC` = `FRE` (até 2019), `FRE NOVO` (2020), `FRE WEB` (2025+).
+  `DT_REFER` é só um marcador do ano (1º de janeiro até 2024; 31 de dezembro depois). Uma linha por versão
+  (até 8 ou mais); `DT_RECEB` de um zip "2015" vai de 2014 a 2018 (reapresentações).
+- Os arquivos de dados trazem **só a última versão** de cada documento (`(CNPJ, Versão)` do capital = 650 contra
+  2.782 no índice), ligada ao índice por `ID_Documento` = `ID_DOC`.
+- `capital_social`: `Tipo_Capital` = Capital Emitido, Subscrito, Integralizado ou Autorizado;
+  `Data_Autorizacao_Aprovacao`; `Quantidade_Acoes_Ordinarias/Preferenciais/Total`. Em unidades de ações
+  (Ambev 15,76 bilhões; Vale 4,44 bilhões; Itaú 5,6 + 5,4 bilhões). Mais de uma linha "Capital Integralizado" por
+  documento quando há histórico de aprovações. Não traz tesouraria.
+- `capital_social_desdobramento`: `Tipo_Evento` = Desdobramento, Grupamento ou Bonificação; `Data_Aprovacao` (de
+  **aprovação**, com valores inválidos como 2077-03-08); quantidades antes e depois, por total, ON e PN.
+  Casos conferidos: WEG (bonificações 2014 e 2018, desdobramentos 2015 e 2021 — os dois desdobramentos batem com
+  o COTAHIST), Itaú (bonificações 2013-2015; desdobramento 1,5x aprovado em 27/07/2018 e visto no preço em
+  21/11/2018).
+- `distribuicao_dividendos_classe_acao`: `Data_Inicio/Fim_Exercicio_Social`, `Especie_Acao` (Ordinária,
+  Preferencial ou vazio), `Classe_Acao`, `Dividendo_Distribuido` (Dividendo Obrigatório, Juros Sobre Capital
+  Próprio, Outros, Dividendo Prioritário Mínimo/Fixo ou vazio), `Montante` (R$) e `Data_Pagamento_Dividendo`
+  (vazia em ~13% das linhas). Cada documento lista os 2-3 últimos exercícios (FRE 2018: 2015 a 2017), então
+  documentos de anos seguidos se sobrepõem. Vale e Gerdau, com DVA zerada, têm pagamentos aqui.
+- Encoding e aspas não verificados no byte: o parser tenta UTF-8, depois latin-1, e aceita aspas se o número de
+  campos não bater.
+
+### Quantidade de ações na DFP (`composicao_capital`)
+
+Sem coluna de escala. Em 2024: Ambev 15.757.657, Vale 4.539.008 e Itaú 4.958.290 ON (**em milhares**); BB
+5.730.834.040, Petrobras 7.442.454.142 e WEG 4.197.317.998 (em unidades). Por isso a fase 2 usa as ações do FRE.

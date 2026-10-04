@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 
-_TICKER = re.compile(r"^([A-Z]{4})(\d{1,2})$")
+# A raiz tem 4 caracteres e pode ter dígito (B3SA3).
+_TICKER = re.compile(r"^([A-Z][A-Z0-9]{3})(\d{1,2})$")
 
 
 def ticker_root(ticker: str) -> str | None:
@@ -71,4 +72,69 @@ def class_securities(securities: list[tuple[int, str, float]]) -> dict[str, int]
         cands = [(vol, sid) for sid, t, vol in securities if ticker_class(t) == cls]
         if cands:
             out[cls] = max(cands)[1]
+    return out
+
+
+# --- Mapeamento automático por nome (só casos inequívocos) -------------------------------
+
+_NOISE = re.compile(
+    r"\b(S\.?\s?A\.?|S/A|SA|CIA|COMPANHIA|LTDA|EM RECUPERACAO JUDICIAL|EM RECUPERACAO)\b"
+)
+
+
+def normalize_name(name: str) -> str:
+    """Nome sem acento, pontuação, espaços e sufixos societários, em maiúsculas."""
+    import unicodedata
+
+    s = unicodedata.normalize("NFKD", name.upper())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[.,\-&'/]", " ", s)
+    s = _NOISE.sub(" ", s)
+    return re.sub(r"[^A-Z0-9]", "", s)
+
+
+def auto_map_roots(
+    unmapped: dict[str, list[str]],
+    companies: list[tuple[int, list[str]]],
+    min_ratio: float,
+    min_prefix: int,
+) -> dict[str, tuple[int, str]]:
+    """Raiz de ticker -> (cvm_code, motivo), só quando o casamento por nome é inequívoco.
+
+    ``unmapped``: raiz -> nomes curtos do COTAHIST (NOMRES) dos papéis dessa raiz.
+    ``companies``: (cvm_code, [razão social, nome de pregão]). Ordem de confiança: nome igual,
+    nome do papel como prefixo do da empresa (tamanho mínimo ``min_prefix``), semelhança acima
+    de ``min_ratio``. Mais de uma empresa no mesmo nível: não mapeia (fica para revisão manual).
+    """
+    import difflib
+
+    index: list[tuple[str, int]] = []
+    for cvm_code, names in companies:
+        for n in names:
+            if n and (norm := normalize_name(n)):
+                index.append((norm, cvm_code))
+    out: dict[str, tuple[int, str]] = {}
+    for root, shorts in unmapped.items():
+        for short in shorts:
+            key = normalize_name(short)
+            if len(key) < 3:
+                continue
+            exact = {c for n, c in index if n == key}
+            if len(exact) == 1:
+                out[root] = (next(iter(exact)), "nome igual")
+                break
+            if exact:
+                continue
+            prefix = {c for n, c in index if len(key) >= min_prefix and n.startswith(key)}
+            if len(prefix) == 1:
+                out[root] = (next(iter(prefix)), "nome do papel é prefixo do da empresa")
+                break
+            if prefix:
+                continue
+            close = {
+                c for n, c in index if difflib.SequenceMatcher(None, key, n).ratio() >= min_ratio
+            }
+            if len(close) == 1:
+                out[root] = (next(iter(close)), "nome muito parecido")
+                break
     return out

@@ -39,6 +39,7 @@ class ScreenParams:
     min_valid_years: int
     liq_min_volume: Decimal
     liq_min_presence: Decimal
+    max_data_age_days: int
 
     @classmethod
     def from_config(cls, cfg: dict) -> ScreenParams:
@@ -71,6 +72,7 @@ class ScreenParams:
             min_valid_years=integer("outlier.min_valid_years"),
             liq_min_volume=num("liquidity.min_avg_volume"),
             liq_min_presence=num("liquidity.min_presence"),
+            max_data_age_days=integer("screen.max_data_age_days"),
         )
 
 
@@ -88,9 +90,9 @@ class YearData:
     jcp: Decimal | None = None
     dividends: Decimal | None = None
     dividends_source: str | None = None
-    lpa: Decimal | None = None  # LPA da classe de referência, como publicado
     market_cap: Decimal | None = None
-    split_factor: Decimal = D(1)  # eventos entre a entrega e a data-base
+    shares: int | None = None  # ações no fim do exercício (FRE, ajustadas por eventos)
+    shares_factor: Decimal = D(1)  # eventos entre o fim do exercício e a data-base (base de shares)
     outlier: bool = False  # suspeito e não liberado pelo usuário: fora das médias
 
 
@@ -122,20 +124,26 @@ class Result:
 
 
 def find_outliers(
-    totals: dict[int, Decimal], multiple: Decimal, median_years: int, min_history: int
+    totals: dict[int, Decimal],
+    multiple: Decimal,
+    median_years: int,
+    min_history: int,
+    persistence: Decimal,
 ) -> dict[int, tuple[Decimal, Decimal, int]]:
-    """Anos com provento total > ``multiple`` x mediana dos ``median_years`` anos anteriores.
+    """Picos isolados de provento: ano com total > ``multiple`` x mediana dos ``median_years``
+    anos anteriores **e** cujo ano seguinte volta abaixo de ``persistence`` x o valor do ano.
 
-    ``totals``: ano -> JCP + dividendos brutos (só anos com dado). Devolve ano ->
-    (mediana, razão, anos usados). Mediana zero não permite concluir: o ano não é marcado.
+    Crescimento que se mantém é novo patamar, não outlier; por isso o último exercício, sem ano
+    seguinte, nunca é marcado. ``totals``: ano -> JCP + dividendos brutos (só anos com dado).
+    Devolve ano -> (mediana, razão, anos usados). Mediana zero não permite concluir.
     """
     out = {}
     for y, total in totals.items():
         prev = [totals[k] for k in range(y - median_years, y) if k in totals]
-        if len(prev) < min_history:
+        if len(prev) < min_history or (y + 1) not in totals:
             continue
         med = statistics.median(prev)
-        if med > 0 and total > multiple * med:
+        if med > 0 and total > multiple * med and totals[y + 1] < persistence * total:
             out[y] = (med, total / med, len(prev))
     return out
 
@@ -342,25 +350,26 @@ def payout_mean(years, last, p: ScreenParams) -> Criterion:
     )
 
 
-def dps_drops(years, last, p: ScreenParams) -> Criterion:
-    """Quedas do dividendo por ação na janela.
+def _dps(y: YearData) -> Decimal | None:
+    """Dividendo por ação do ano: total declarado / ações no fim do exercício, levado à base de
+    ações da data-base pelos eventos societários posteriores. Ano de outlier não tem DPS."""
+    total = _total(y)
+    if y.outlier or total is None or not y.shares:
+        return None
+    return total / y.shares / y.shares_factor
 
-    DPS = payout x LPA da classe de referência, levado à base de ações da data-base pelos
-    eventos societários (a CVM não republica o LPA antigo ajustado). Anos de outlier e de
-    prejuízo não têm DPS: as comparações que os envolvem são puladas.
+
+def dps_drops(years, last, p: ScreenParams) -> Criterion:
+    """Quedas do dividendo por ação na janela (ver ``_dps``).
+
+    Comparações com ano de outlier ou sem ações são puladas; exige ``dps_min_pairs`` pares.
     """
     name = "queda_dividendo_por_acao"
     thr = f"<= {p.dps_max_drops} quedas em {p.dps_window} anos"
     keys, bad = _window_or_unavailable(name, thr, years, last, p.dps_window)
     if bad:
         return bad
-    dps: dict[int, Decimal] = {}
-    for k in keys:
-        y = years[k]
-        total = _total(y)
-        if y.outlier or total is None or y.profit is None or y.profit <= 0 or y.lpa is None:
-            continue
-        dps[k] = total / y.profit * y.lpa / y.split_factor
+    dps = {k: v for k in keys if (v := _dps(years[k])) is not None}
     pairs = [(k - 1, k) for k in keys if (k - 1) in dps and k in dps]
     if len(pairs) < p.dps_min_pairs:
         return _unavailable(name, thr, "data", comparable_pairs=len(pairs), needed=p.dps_min_pairs)
@@ -374,7 +383,7 @@ def dps_drops(years, last, p: ScreenParams) -> Criterion:
             "dps": {k: str(v) for k, v in dps.items()},
             "drop_years": drops,
             "comparable_pairs": len(pairs),
-            "method": "payout x LPA / fator de eventos societários",
+            "sources": {k: years[k].dividends_source for k in keys},
             **_source_detail(years, keys),
         },
     )
@@ -399,10 +408,20 @@ def liquidity(liq: Liquidity | None, p: ScreenParams) -> Criterion:
 
 
 def evaluate(
-    years: dict[int, YearData], liq: Liquidity | None, p: ScreenParams, excluded: bool = False
+    years: dict[int, YearData],
+    liq: Liquidity | None,
+    p: ScreenParams,
+    excluded: bool = False,
+    as_of: date | None = None,
+    listed: bool = True,
 ) -> Result:
     if excluded:
         return Result("excluded", None, None, [])
+    if not listed:
+        # Nenhum papel no COTAHIST: emissora sem ações negociadas, fora do universo da bolsa.
+        return Result(
+            "not_listed", max((y.reference_date for y in years.values()), default=None), None, []
+        )
     if not years:
         return Result(
             "insufficient_history",
@@ -411,6 +430,9 @@ def evaluate(
             [_unavailable("lucro_positivo", "", "history", missing_years=[])],
         )
     last = max(years)
+    if as_of is not None and (as_of - years[last].reference_date).days > p.max_data_age_days:
+        # A empresa parou de entregar DFP: não avaliar com dados velhos.
+        return Result("stale", years[last].reference_date, None, [])
     criteria = [
         profit_positive(years, last, p),
         roe_mean(years, last, p),

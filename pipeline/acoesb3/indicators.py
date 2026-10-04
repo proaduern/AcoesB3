@@ -1,43 +1,68 @@
-"""Fatos anuais de uma DFP (lucro, PL, proventos, LPA, ações) por plano de contas.
+"""Fatos anuais de uma DFP (lucro, PL, proventos) lidos conta a conta.
 
-Os códigos mudam de sentido entre empresa comum, banco e seguradora (docs/fontes.md).
-A conta "Atribuído a Sócios da Empresa Controladora" identifica o plano:
+Os códigos mudam de sentido entre empresa comum, banco e seguradora (docs/fontes.md), e há
+empresas com planos misturados (o Banco do Brasil a partir de 2020 tem DRE no padrão comum,
+balanço e DVA no padrão de banco). Por isso cada conceito é resolvido por conta, olhando o que
+existe no documento, e não por um "plano" único:
 
-| plano      | lucro do controlador | PL consolidado / não controlad. | JCP / dividendos (DVA)  |
-|------------|----------------------|---------------------------------|-------------------------|
-| comum      | DRE 3.11.01          | BPP 2.03 / 2.03.09              | 7.08.04.01 / 7.08.04.02 |
-| banco      | DRE 3.09.01          | BPP 2.08 / 2.08.09              | 7.09.04.01 / 7.09.04.02 |
-| seguradora | DRE 3.13.01          | BPP 2.03 / 2.03.09              | 7.11.04.01 / 7.11.04.02 |
+| conceito              | consolidada                   | individual             |
+|-----------------------|-------------------------------|------------------------|
+| lucro do controlador  | única entre 3.09.01, 3.11.01, | 3.11 (comum), 3.09     |
+|                       | 3.13.01 (empate: a do plano)  | (banco), 3.13 (segur.) |
+| PL do controlador     | 2.08 (se existir) ou 2.03,    | idem, sem subtrair     |
+|                       | menos a conta .09 (não contr.)| não controladores      |
+| JCP e dividendos      | DVA 7.09.04 (banco), 7.11.04 (seguradora) ou 7.08.04 (comum): o  |
+|                       | conjunto que existir                                            |
 
-Conferido nas linhas reais da DFP 2024 de WEG, Itaú e BB Seguridade (tests/fixtures).
-Tudo o que faltar vira ``None`` (indisponível); nada é preenchido com zero.
+O "plano" (comum, banco, seguradora) é só um rótulo, deduzido da DVA, do balanço e da DRE
+(nessa ordem), usado para desempatar o lucro e escolher a conta de lucro no escopo individual.
+Conferido nas linhas reais da DFP 2024 de WEG, Itaú e BB Seguridade (tests/fixtures) e nos
+diagnósticos do Actions (962 DFP individuais, BB 2020+). Tudo o que faltar vira ``None``
+(indisponível); nada é preenchido com zero.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from .cvm import ascii_upper
+
 Lines = dict[tuple[str, str], Decimal]  # (demonstração, código da conta) -> valor em R$
 
-
-@dataclass(frozen=True)
-class Plan:
-    name: str
-    profit: str
-    equity: str
-    equity_nci: str
-    jcp: str
-    dividends: str
-
-
-PLANS = {
-    "comum": Plan("comum", "3.11.01", "2.03", "2.03.09", "7.08.04.01", "7.08.04.02"),
-    "banco": Plan("banco", "3.09.01", "2.08", "2.08.09", "7.09.04.01", "7.09.04.02"),
-    "seguradora": Plan("seguradora", "3.13.01", "2.03", "2.03.09", "7.11.04.01", "7.11.04.02"),
+# plano -> (lucro consolidado atribuído, lucro total no escopo individual)
+PROFIT = {
+    "comum": ("3.11.01", "3.11"),
+    "banco": ("3.09.01", "3.09"),
+    "seguradora": ("3.13.01", "3.13"),
+}
+# plano -> (JCP, dividendos) na DVA
+DVA = {
+    "banco": ("7.09.04.01", "7.09.04.02"),
+    "seguradora": ("7.11.04.01", "7.11.04.02"),
+    "comum": ("7.08.04.01", "7.08.04.02"),
 }
 LPA_ON = ("DRE", "3.99.01.01")
 LPA_PN = ("DRE", "3.99.01.02")
+
+# Contas lidas das demonstrações (usado pela carga do banco).
+NEEDED = sorted(
+    {("DRE", c) for pair in PROFIT.values() for c in pair}
+    | {("BPP", c) for c in ("2.03", "2.03.09", "2.08", "2.08.09")}
+    | {("DVA", c) for pair in DVA.values() for c in pair}
+    | {LPA_ON, LPA_PN}
+)
+_NEEDED_SET = frozenset(NEEDED)
+
+
+# Contas do balanço lidas para achar o PL por nome: nível 2 do passivo/PL e filhos do PL.
+BPP_TREE = re.compile(r"^2\.\d\d(\.\d\d)?$")
+_ROOT = re.compile(r"^2\.\d\d$")
+
+
+def wanted_line(statement: str, code: str) -> bool:
+    return (statement, code) in _NEEDED_SET or (statement == "BPP" and bool(BPP_TREE.match(code)))
 
 
 @dataclass
@@ -52,33 +77,121 @@ class Annual:
     lpa_pn: Decimal | None = None
     shares_on: int | None = None
     shares_pn: int | None = None
+    consolidated: bool | None = None
     notes: dict = field(default_factory=dict)
 
 
-def detect_plan(lines: Lines, forced: str | None = None) -> tuple[str | None, str | None]:
-    """Plano de contas e, se não houver, o motivo. ``forced`` vem de company_class_override."""
-    if forced:
-        return forced, None
-    present = [p.name for p in PLANS.values() if ("DRE", p.profit) in lines]
+def _dva_plan(lines: Lines) -> tuple[str | None, str | None]:
+    present = [p for p, (j, d) in DVA.items() if ("DVA", j) in lines and ("DVA", d) in lines]
     if len(present) == 1:
         return present[0], None
     if not present:
-        return None, "sem conta de lucro atribuído aos controladores (3.09.01, 3.11.01, 3.13.01)"
-    return None, f"mais de um plano de contas possível: {present}"
+        return None, "sem JCP/dividendos na DVA (7.08.04, 7.09.04 ou 7.11.04)"
+    return None, f"mais de um conjunto de proventos na DVA: {present}"
+
+
+def detect_plan(lines: Lines, forced: str | None = None) -> str | None:
+    """Rótulo do plano: DVA, depois balanço (2.08 = banco), depois DRE."""
+    if forced:
+        return forced
+    plan, _ = _dva_plan(lines)
+    if plan:
+        return plan
+    if ("BPP", "2.08") in lines:
+        return "banco"
+    attrib = [p for p, (a, _) in PROFIT.items() if ("DRE", a) in lines]
+    if len(attrib) == 1:
+        return attrib[0]
+    if ("DRE", "3.13") in lines:
+        return "seguradora"
+    if ("DRE", "3.11") in lines:
+        return "comum"
+    return None
+
+
+def _profit(lines: Lines, plan: str | None, consolidated: bool | None, notes: dict):
+    if consolidated is False:
+        if plan is None:
+            notes["profit"] = "escopo individual sem plano identificado"
+            return None
+        value = lines.get(("DRE", PROFIT[plan][1]))
+        if value is None:
+            notes["profit"] = f"falta DRE {PROFIT[plan][1]} (lucro, escopo individual)"
+        return value
+    present = [a for a, _ in PROFIT.values() if ("DRE", a) in lines]
+    if len(present) == 1:
+        return lines[("DRE", present[0])]
+    if not present:
+        notes["profit"] = "sem lucro atribuído aos controladores (3.09.01, 3.11.01, 3.13.01)"
+        return None
+    preferred = PROFIT[plan][0] if plan else None
+    if preferred in present:
+        return lines[("DRE", preferred)]
+    notes["profit"] = f"mais de uma conta de lucro dos controladores: {present}"
+    return None
+
+
+def equity_root(lines: Lines, labels: dict[str, str] | None) -> str | None:
+    """Código da conta do PL: a de nível 2 cujo nome começa por "Patrimônio Líquido"; sem nomes
+    (ou sem achá-la), 2.08 se existir, senão 2.03."""
+    found = sorted(
+        c
+        for c, d in (labels or {}).items()
+        if _ROOT.match(c)
+        and ascii_upper(d).startswith("PATRIMONIO LIQUIDO")
+        and ("BPP", c) in lines
+    )
+    if len(found) == 1:
+        return found[0]
+    if found:
+        return None  # mais de uma candidata: ambíguo
+    return "2.08" if ("BPP", "2.08") in lines else "2.03"
+
+
+def _equity(lines: Lines, consolidated: bool | None, notes: dict, labels=None):
+    root = equity_root(lines, labels)
+    if root is None:
+        notes["equity"] = "mais de uma conta de Patrimônio Líquido no balanço"
+        return None
+    total = lines.get(("BPP", root))
+    nci_codes = [
+        c
+        for c, d in (labels or {}).items()
+        if c.startswith(root + ".") and "NAO CONTROLADORES" in ascii_upper(d)
+    ] or [f"{root}.09"]
+    nci_codes = [c for c in nci_codes if ("BPP", c) in lines]
+    if total is None:
+        notes["equity"] = f"falta BPP {root}"
+        return None
+    if len(nci_codes) == 1:
+        return total - lines[("BPP", nci_codes[0])]
+    if not nci_codes and consolidated is False:
+        return total  # individual não tem participação de não controladores
+    notes["equity"] = (
+        f"falta BPP {root}.xx (não controladores)"
+        if not nci_codes
+        else f"mais de uma conta de não controladores: {nci_codes}"
+    )
+    return None
 
 
 def extract_annual(
     lines: Lines,
-    shares: tuple[int, int, int, int] | None,
+    shares: tuple[int, int, int, int] | None = None,
     forced_plan: str | None = None,
     dividend_override: tuple[Decimal, Decimal, str] | None = None,
+    consolidated: bool | None = None,
+    labels: dict[str, str] | None = None,
 ) -> Annual:
-    """``shares``: (ordinárias, preferenciais, tesouraria ON, tesouraria PN) ou None."""
-    a = Annual()
-    plan_name, why = detect_plan(lines, forced_plan)
-    if why:
-        a.notes["plan"] = why
-    a.plan = plan_name
+    """``shares``: (ordinárias, preferenciais, tesouraria ON, tesouraria PN) da DFP, ou None.
+
+    ``consolidated``: escopo das demonstrações do documento (financial_line.consolidated).
+    ``labels``: código -> descrição das contas do balanço (para achar o PL por nome).
+    """
+    a = Annual(consolidated=consolidated)
+    a.plan = detect_plan(lines, forced_plan)
+    if a.plan is None:
+        a.notes["plan"] = "plano de contas não identificado"
     a.lpa_on = lines.get(LPA_ON)
     a.lpa_pn = lines.get(LPA_PN)
     if shares is not None:
@@ -87,21 +200,70 @@ def extract_annual(
         a.shares_pn = preferred - t_pref
     else:
         a.notes["shares"] = "composicao_capital indisponível neste documento"
-    if plan_name is not None:
-        plan = PLANS[plan_name]
-        a.profit = lines.get(("DRE", plan.profit))
-        total = lines.get(("BPP", plan.equity))
-        nci = lines.get(("BPP", plan.equity_nci))
-        if total is not None and nci is not None:
-            a.equity = total - nci
-        else:
-            a.notes["equity"] = f"falta BPP {plan.equity} ou {plan.equity_nci}"
-        jcp = lines.get(("DVA", plan.jcp))
-        div = lines.get(("DVA", plan.dividends))
-        if jcp is not None and div is not None:
-            a.jcp, a.dividends, a.dividends_source = jcp, div, "dva"
-        else:
-            a.notes["dividends"] = f"falta DVA {plan.jcp} ou {plan.dividends}"
+    a.profit = _profit(lines, a.plan, consolidated, a.notes)
+    a.equity = _equity(lines, consolidated, a.notes, labels)
+    dva_plan, why = _dva_plan(lines)
+    if dva_plan:
+        jcp, div = DVA[dva_plan]
+        a.jcp, a.dividends, a.dividends_source = lines[("DVA", jcp)], lines[("DVA", div)], "dva"
+    else:
+        a.notes["dividends"] = why
     if dividend_override is not None:
         a.jcp, a.dividends, a.dividends_source = dividend_override
     return a
+
+
+def choose_dividends(
+    jcp: Decimal | None,
+    dividends: Decimal | None,
+    source: str | None,
+    fre_jcp: Decimal | None,
+    fre_dividends: Decimal | None,
+    fre_available_from,
+    as_of=None,
+) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """Proventos do exercício: valor manual (ou de outra fonte) > FRE > DVA.
+
+    O FRE só vale se já tinha sido entregue em ``as_of`` (ponto no tempo). Sem nenhum, None.
+    """
+    if source not in (None, "dva") and jcp is not None and dividends is not None:
+        return jcp, dividends, source
+    if (
+        fre_jcp is not None
+        and fre_dividends is not None
+        and (as_of is None or (fre_available_from is not None and fre_available_from <= as_of))
+    ):
+        return fre_jcp, fre_dividends, "fre"
+    if jcp is not None and dividends is not None:
+        return jcp, dividends, source or "dva"
+    return None, None, None
+
+
+def scale_mismatch(dva_total, fre_total, low: Decimal, high: Decimal) -> bool:
+    """FRE e DVA do mesmo exercício diferem por ~1000x (ou o inverso): uma das duas fontes está
+    na escala errada (a CVM mistura R$ e R$ mil) e não há como saber qual. Só vale quando as duas
+    são positivas."""
+    if not dva_total or not fre_total or dva_total <= 0 or fre_total <= 0:
+        return False
+    ratio = fre_total / dva_total
+    return low <= ratio <= high or low <= 1 / ratio <= high
+
+
+def suspect_zero_years(
+    years: list[tuple[object, Decimal | None, Decimal | None, str | None]],
+) -> set:
+    """Exercícios com DVA zerada que provavelmente não refletem a distribuição.
+
+    ``years``: (data-base, total da DVA ou manual, total do FRE, fonte do total), por empresa.
+    Depois do último exercício em que o FRE mostra pagamento, se a DVA é zero em todos os anos
+    e nunca positiva, a DVA não está capturando os proventos (Vale, Gerdau): os anos zerados
+    ficam indisponíveis, para lançamento manual, em vez de contar como "não pagou".
+    """
+    with_fre = [ref for ref, _, fre, _ in years if fre is not None and fre > 0]
+    if not with_fre:
+        return set()
+    last = max(with_fre)
+    after = [(ref, total, src) for ref, total, _, src in years if ref > last and src == "dva"]
+    if any(total and total > 0 for _, total, _ in after):
+        return set()
+    return {ref for ref, total, _ in after if total is not None and total == 0}

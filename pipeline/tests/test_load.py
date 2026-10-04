@@ -84,7 +84,11 @@ def test_dfp_carga_valores_em_reais_e_versoes(conn, served):
     codes = {r[0] for r in conn.execute("SELECT DISTINCT account_code FROM financial_line")}
     allowed = conn.execute("SELECT statement, code, include_children FROM cvm_account").fetchall()
     for code in codes:
-        assert any(code == c or (ch and code.startswith(c + ".")) for _, c, ch in allowed), code
+        # filhos diretos de uma conta 2.NN (o PL, achado por nome) entram além da lista
+        parent = code.rsplit(".", 1)[0] if code.startswith("2.") and code.count(".") == 2 else None
+        assert any(
+            code == c or (ch and code.startswith(c + ".")) or parent == c for _, c, ch in allowed
+        ), code
 
     # BRB: 3 versões no índice com datas de entrega; nenhuma tem contas nesta amostra
     brb = conn.execute(

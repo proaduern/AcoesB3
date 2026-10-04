@@ -9,6 +9,10 @@ on:
         description: "Recarregar todas as DFP antes de calcular (~10 min)"
         type: boolean
         default: false
+      load_fre:
+        description: "Carregar o FRE (ações, desdobramentos e proventos) antes de calcular (~3 min)"
+        type: boolean
+        default: false
       step:
         description: "Etapa (vazio = todas): annual, outliers, events ou screens"
         required: false
@@ -37,6 +41,9 @@ jobs:
       - name: Recarrega DFP
         if: ${{ inputs.reload_dfp }}
         run: acoesb3 cvm --doc DFP --force
+      - name: Carrega FRE
+        if: ${{ inputs.load_fre }}
+        run: acoesb3 cvm --doc FRE
       - name: Calcula
         run: |
           args=()

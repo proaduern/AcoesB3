@@ -13,18 +13,9 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from . import corporate, indicators, mapping, screen
+from . import shares as shares_mod
 
 log = logging.getLogger(__name__)
-
-# Contas lidas das demonstrações para os fatos anuais.
-_NEEDED = sorted(
-    {("DRE", p.profit) for p in indicators.PLANS.values()}
-    | {("BPP", c) for p in indicators.PLANS.values() for c in (p.equity, p.equity_nci)}
-    | {("DVA", c) for p in indicators.PLANS.values() for c in (p.jcp, p.dividends)}
-    | {indicators.LPA_ON, indicators.LPA_PN}
-)
-_NEEDED_SET = frozenset(_NEEDED)
-_APPLIED = ("auto", "confirmed")
 
 
 def load_config(conn: psycopg.Connection) -> dict:
@@ -34,8 +25,36 @@ def load_config(conn: psycopg.Connection) -> dict:
 # --- 1. Fatos anuais --------------------------------------------------------
 
 
-def build_annual(conn: psycopg.Connection) -> dict:
+def _fre_dividends(conn, cfg: dict) -> dict[tuple[int, date], tuple]:
+    """(cvm_code, fim do exercício) -> (JCP, outros proventos, entrega do documento do FRE).
+
+    Vale o documento mais recente que traz o exercício (os FRE de anos seguidos se sobrepõem).
+    Valores em R$, somados por espécie e classe de ação (o total da empresa)."""
+    jcp_kinds = set(cfg["fre.jcp_kinds"])
+    best: dict[tuple[int, date], tuple[date, int]] = {}
+    sums: dict[tuple[int, date, int], list[Decimal]] = defaultdict(lambda: [Decimal(0), Decimal(0)])
+    for cvm, end, fid, received, kind, amount in conn.execute(
+        """
+        SELECT f.cvm_code, d.exercise_end, f.id, f.received_date, d.kind, sum(d.amount)
+        FROM fre_dividend d JOIN filing f ON f.id = d.filing_id
+        GROUP BY 1, 2, 3, 4, 5
+        """
+    ):
+        key = (cvm, end)
+        if key not in best or (received, fid) > best[key]:
+            best[key] = (received, fid)
+        sums[(cvm, end, fid)][0 if kind in jcp_kinds else 1] += amount
+    return {key: (*sums[(key[0], key[1], fid)], received) for key, (received, fid) in best.items()}
+
+
+def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
     """Um registro de indicator_annual por versão de DFP com contas. Idempotente."""
+    cfg = cfg or load_config(conn)
+    fre_div = _fre_dividends(conn, cfg)
+    scale = (
+        Decimal(str(cfg["fre.scale_mismatch_min"])),
+        Decimal(str(cfg["fre.scale_mismatch_max"])),
+    )
     forced = dict(
         conn.execute("SELECT cvm_code, plan FROM company_class_override WHERE plan IS NOT NULL")
     )
@@ -58,40 +77,55 @@ def build_annual(conn: psycopg.Connection) -> dict:
             "SELECT id, cvm_code, reference_date FROM filing WHERE doc_type = 'DFP' AND has_lines"
         )
     }
-    stmts = sorted({s for s, _ in _NEEDED})
-    codes = sorted({c for _, c in _NEEDED})
-    rows = []
+    stmts = sorted({s for s, _ in indicators.NEEDED})
+    codes = sorted({c for _, c in indicators.NEEDED})
+    facts: list[tuple] = []
     with conn.cursor(name="annual_lines") as cur:
         cur.execute(
             """
-            SELECT fl.filing_id, fl.statement, fl.account_code, fl.value
+            SELECT fl.filing_id, fl.statement, fl.account_code, fl.value, fl.consolidated,
+                   fl.description
             FROM financial_line fl JOIN filing f ON f.id = fl.filing_id
             WHERE f.doc_type = 'DFP' AND f.has_lines AND fl.period_end = f.reference_date
-              AND fl.statement = ANY(%s) AND fl.account_code = ANY(%s)
+              AND ((fl.statement = ANY(%s) AND fl.account_code = ANY(%s))
+                   OR (fl.statement = 'BPP' AND fl.account_code ~ '^2\\.[0-9]{2}(\\.[0-9]{2})?$'))
             ORDER BY fl.filing_id
             """,
             (stmts, codes),
         )
         seen: set[int] = set()
         for fid, grp in itertools.groupby(cur, key=lambda r: r[0]):
-            lines = {(s, c): v for _, s, c, v in grp if (s, c) in _NEEDED_SET}
-            rows.append(_annual_row(fid, filings, lines, shares, forced, overrides))
+            grp = list(grp)
+            lines = {(s, c): v for _, s, c, v, _, _ in grp if indicators.wanted_line(s, c)}
+            labels = {c: d for _, s, c, _, _, d in grp if s == "BPP" and d}
+            scope = grp[0][4]  # uma carga grava um só escopo por documento
+            facts.append(
+                _annual_fact(
+                    fid, filings, lines, shares, forced, overrides, scope, fre_div, scale, labels
+                )
+            )
             seen.add(fid)
     # DFP com contas mas sem nenhuma das linhas lidas: registrar tudo como indisponível.
     for fid in filings.keys() - seen:
-        rows.append(_annual_row(fid, filings, {}, shares, forced, overrides))
+        facts.append(
+            _annual_fact(fid, filings, {}, shares, forced, overrides, None, fre_div, scale)
+        )
+    suspect = _apply_zero_dividend_rule(facts)
+    rows = [_to_row(f) for f in facts]
     with conn.cursor() as cur:
         cur.executemany(
             """
             INSERT INTO indicator_annual (filing_id, cvm_code, reference_date, plan, profit, equity,
                 jcp, dividends, dividends_source, lpa_on, lpa_pn, shares_on, shares_pn, notes,
-                computed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                fre_jcp, fre_dividends, fre_available_from, computed_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             ON CONFLICT (filing_id) DO UPDATE SET plan = EXCLUDED.plan, profit = EXCLUDED.profit,
                 equity = EXCLUDED.equity, jcp = EXCLUDED.jcp, dividends = EXCLUDED.dividends,
                 dividends_source = EXCLUDED.dividends_source, lpa_on = EXCLUDED.lpa_on,
                 lpa_pn = EXCLUDED.lpa_pn, shares_on = EXCLUDED.shares_on,
-                shares_pn = EXCLUDED.shares_pn, notes = EXCLUDED.notes, computed_at = now()
+                shares_pn = EXCLUDED.shares_pn, notes = EXCLUDED.notes,
+                fre_jcp = EXCLUDED.fre_jcp, fre_dividends = EXCLUDED.fre_dividends,
+                fre_available_from = EXCLUDED.fre_available_from, computed_at = now()
             """,
             rows,
         )
@@ -106,17 +140,65 @@ def build_annual(conn: psycopg.Connection) -> dict:
         what: sum(1 for r in rows if r[idx] is None)
         for what, idx in (("profit", 4), ("equity", 5), ("dividends", 7), ("shares_on", 11))
     }
-    return {"annual_rows": len(rows), "plans": dict(plans), "unavailable": missing}
+    return {
+        "annual_rows": len(rows),
+        "plans": dict(plans),
+        "unavailable": missing,
+        "with_fre_dividends": sum(1 for r in rows if r[14] is not None),
+        "dva_zero_suspect_years": suspect,
+    }
 
 
-def _annual_row(fid, filings, lines, shares, forced, overrides):
+def _annual_fact(
+    fid, filings, lines, shares, forced, overrides, consolidated, fre_div, scale, labels=None
+):  # fmt: skip
     cvm, ref = filings[fid]
     a = indicators.extract_annual(
-        lines, shares.get(fid), forced.get(cvm), overrides.get((cvm, ref))
+        lines, shares.get(fid), forced.get(cvm), overrides.get((cvm, ref)), consolidated, labels
     )
+    a.notes["scope"] = {True: "consolidada", False: "individual", None: "sem demonstrações"}[
+        consolidated
+    ]
+    fre = fre_div.get((cvm, ref), (None, None, None))
+    if (
+        a.dividends_source == "dva"
+        and a.jcp is not None
+        and fre[0] is not None
+        and indicators.scale_mismatch(a.jcp + a.dividends, fre[0] + fre[1], *scale)
+    ):
+        a.jcp = a.dividends = a.dividends_source = None
+        fre = (None, None, None)
+        a.notes["dividends"] = "FRE e DVA divergem por ~1000x: escala incerta, ano indisponível"
+    return (fid, cvm, ref, a, fre)
+
+
+def _apply_zero_dividend_rule(facts: list[tuple]) -> int:
+    """DVA zerada depois de o FRE mostrar pagamentos: indisponível (ver indicators)."""
+    by_company: dict[int, list] = defaultdict(list)
+    for _fid, cvm, ref, a, fre in facts:
+        total = a.jcp + a.dividends if a.jcp is not None and a.dividends is not None else None
+        fre_total = fre[0] + fre[1] if fre[0] is not None else None
+        by_company[cvm].append((ref, total, fre_total, a.dividends_source))
+    flagged = {
+        cvm: indicators.suspect_zero_years(sorted(y, key=lambda t: t[0]))
+        for cvm, y in by_company.items()
+    }
+    n = 0
+    for _fid, cvm, ref, a, _fre in facts:
+        if ref in flagged.get(cvm, ()):
+            a.jcp = a.dividends = a.dividends_source = None
+            a.notes["dividends"] = (
+                "DVA zerada depois de o FRE mostrar pagamentos: indisponível, lançar à mão"
+            )
+            n += 1
+    return n
+
+
+def _to_row(fact):
+    fid, cvm, ref, a, fre = fact
     return (
         fid, cvm, ref, a.plan, a.profit, a.equity, a.jcp, a.dividends, a.dividends_source,
-        a.lpa_on, a.lpa_pn, a.shares_on, a.shares_pn, Jsonb(a.notes),
+        a.lpa_on, a.lpa_pn, a.shares_on, a.shares_pn, Jsonb(a.notes), *fre,
     )  # fmt: skip
 
 
@@ -124,16 +206,19 @@ def _annual_row(fid, filings, lines, shares, forced, overrides):
 
 
 def _best_annual(conn) -> dict[tuple[int, date], tuple]:
-    """Versão mais recente de cada (empresa, data-base) com fatos anuais."""
+    """Versão mais recente de cada (empresa, data-base) com fatos anuais, com os proventos
+    já escolhidos (manual > FRE > DVA), sem olhar a data de entrega."""
     best: dict[tuple[int, date], tuple] = {}
-    for row in conn.execute(
+    for cvm, ref, ver, jcp, div, src, fjcp, fdiv in conn.execute(
         """
-        SELECT a.cvm_code, a.reference_date, f.version, a.jcp, a.dividends
+        SELECT a.cvm_code, a.reference_date, f.version, a.jcp, a.dividends, a.dividends_source,
+               a.fre_jcp, a.fre_dividends
         FROM indicator_annual a JOIN filing f ON f.id = a.filing_id
         ORDER BY a.cvm_code, a.reference_date, f.version
         """
     ):
-        best[(row[0], row[1])] = row[2:]
+        j, d, _ = indicators.choose_dividends(jcp, div, src, fjcp, fdiv, None)
+        best[(cvm, ref)] = (ver, j, d)
     return best
 
 
@@ -148,7 +233,11 @@ def build_outliers(conn: psycopg.Connection, cfg: dict) -> dict:
     rows = []
     for cvm, totals in by_company.items():
         found = screen.find_outliers(
-            totals, p.outlier_multiple, p.outlier_median_years, p.outlier_min_history
+            totals,
+            p.outlier_multiple,
+            p.outlier_median_years,
+            p.outlier_min_history,
+            Decimal(str(cfg["outlier.persistence"])),
         )
         for y, (med, ratio, n) in found.items():
             rows.append((cvm, refs[(cvm, y)], totals[y], med, ratio, n))
@@ -243,8 +332,10 @@ def snapshot_dates(today: date, first_year: int) -> list[date]:
     return sorted({d for d in ends if d < today} | {today})
 
 
-def _company_securities(conn):
-    """cvm_code -> [(security_id, ticker, volume total)] e diagnósticos do mapeamento."""
+def _company_securities(conn, cfg: dict | None = None):
+    """cvm_code -> [(security_id, ticker, volume total)], raízes ambíguas, papéis sem empresa e o
+    que o mapeamento automático por nome resolveu (raiz -> (cvm_code, motivo))."""
+    cfg = cfg or load_config(conn)
     fca = [
         (t, c)
         for t, c in conn.execute(
@@ -253,30 +344,35 @@ def _company_securities(conn):
     ]
     over = dict(conn.execute("SELECT ticker_root, cvm_code FROM ticker_company_override"))
     root_map, ambiguous = mapping.build_root_map(fca, over)
+    secs = conn.execute(
+        "SELECT s.id, s.ticker, s.short_name, coalesce(sum(q.volume), 0) FROM security s"
+        " LEFT JOIN quote_daily q ON q.security_id = s.id GROUP BY s.id, s.ticker, s.short_name"
+    ).fetchall()
+    unmapped_names: dict[str, list[str]] = defaultdict(list)
+    for _sid, ticker, short, _vol in secs:
+        root = mapping.ticker_root(ticker)
+        if root and root not in root_map and root not in ambiguous and short:
+            unmapped_names[root].append(short)
+    companies = [
+        (c, [n, t]) for c, n, t in conn.execute("SELECT cvm_code, name, trade_name FROM company")
+    ]
+    auto = mapping.auto_map_roots(
+        unmapped_names,
+        companies,
+        float(cfg["mapping.auto_min_ratio"]),
+        int(cfg["mapping.auto_min_prefix"]),
+    )
+    root_map = {**{r: c for r, (c, _) in auto.items()}, **root_map}
     by_company: dict[int, list] = defaultdict(list)
     unmapped = []
-    for sid, ticker, vol in conn.execute(
-        "SELECT s.id, s.ticker, coalesce(sum(q.volume), 0) FROM security s"
-        " LEFT JOIN quote_daily q ON q.security_id = s.id GROUP BY s.id, s.ticker"
-    ):
+    for sid, ticker, _short, vol in secs:
         root = mapping.ticker_root(ticker)
         cvm = root_map.get(root) if root else None
         if cvm is None:
             unmapped.append((ticker, float(vol)))
         else:
             by_company[cvm].append((sid, ticker, float(vol)))
-    return by_company, ambiguous, unmapped
-
-
-def _applied_events(conn) -> dict[int, list[tuple[date, Decimal]]]:
-    ev: dict[int, list] = defaultdict(list)
-    for sid, d, f in conn.execute(
-        "SELECT security_id, event_date, factor FROM corporate_event WHERE status = ANY(%s)"
-        " ORDER BY event_date",
-        (list(_APPLIED),),
-    ):
-        ev[sid].append((d, f))
-    return ev
+    return by_company, ambiguous, unmapped, auto
 
 
 def _fiscal_year_end_prices(conn, wanted: set[tuple[int, date]], lookback: int):
@@ -330,15 +426,104 @@ def _liquidity(conn, as_of: date, months: int, sec_company: dict[int, int]):
     }, days
 
 
+def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
+    """Eventos por empresa: fator do FRE, data de efeito do COTAHIST (corporate.merge_events)."""
+    window = int(cfg["events.match_window_days"])
+    tol = Decimal(str(cfg["events.match_tolerance"]))
+    dedupe = int(cfg["events.dedupe_days"])
+    by_company, _, _, _ = _company_securities(conn, cfg)
+    sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
+    fre_events: dict[int, list] = defaultdict(list)
+    for cvm, approved, before, after, received, kind in conn.execute(
+        """
+        SELECT f.cvm_code, s.approved_on, s.total_before, s.total_after, f.received_date,
+               s.event_type
+        FROM fre_split s JOIN filing f ON f.id = s.filing_id
+        WHERE s.approved_on IS NOT NULL AND s.total_before > 0 AND s.total_after > 0
+        """
+    ):
+        fre_events[cvm].append(
+            corporate.FreEvent(
+                approved, Decimal(after) / Decimal(before), received, kind, before, after
+            )
+        )
+    price_events: dict[int, list] = defaultdict(list)
+    for sid, d, factor, status, source in conn.execute(
+        "SELECT security_id, event_date, factor, status, source FROM corporate_event"
+        " WHERE status <> 'rejected'"
+    ):
+        cvm = sec_company.get(sid)
+        if cvm is not None:
+            kind = "manual" if source == "manual" else status
+            price_events[cvm].append(corporate.PriceEvent(d, factor, kind))
+    coverage = dict(
+        conn.execute(
+            """
+            SELECT f.cvm_code, max(f.received_date) FROM filing f
+            WHERE f.doc_type = 'FRE' AND (
+                EXISTS (SELECT 1 FROM fre_dividend d WHERE d.filing_id = f.id)
+                OR EXISTS (SELECT 1 FROM fre_split s WHERE s.filing_id = f.id))
+            GROUP BY 1
+            """
+        )
+    )
+    out, dropped = [], []
+    for cvm in set(fre_events) | set(price_events):
+        merged, drop = corporate.merge_events(
+            fre_events.get(cvm, []),
+            price_events.get(cvm, []),
+            coverage.get(cvm),
+            window,
+            tol,
+            dedupe,
+        )
+        out += [
+            (
+                cvm,
+                e.event_date,
+                e.factor,
+                e.source,
+                e.date_basis,
+                e.known_from,
+                e.event_type,
+                e.shares_before,
+                e.shares_after,
+            )  # fmt: skip
+            for e in merged
+        ]
+        dropped += [(cvm, e.event_date.isoformat(), float(e.factor)) for e in drop]
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM company_event")
+        cur.executemany(
+            "INSERT INTO company_event (cvm_code, event_date, factor, source, date_basis,"
+            " known_from, event_type, shares_before, shares_after)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            out,
+        )
+    conn.commit()
+    by_kind: dict[str, int] = defaultdict(int)
+    for row in out:
+        by_kind[f"{row[3]}/{row[4]}"] += 1
+    raw_fre = sum(len(v) for v in fre_events.values())
+    return {
+        "fre_events_raw": raw_fre,
+        "fre_events_unique": sum(
+            len(corporate.dedupe_fre(v, dedupe, Decimal("0.005"))) for v in fre_events.values()
+        ),
+        "company_events": dict(by_kind),
+        "price_events_dropped_vs_fre": len(dropped),
+        "dropped_sample": sorted(dropped)[:10],
+    }
+
+
 def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None) -> dict:
     today = today or date.today()
     p = screen.ScreenParams.from_config(cfg)
     excluded_sectors = set(cfg["screen.excluded_sectors"])
-    by_company, ambiguous, unmapped = _company_securities(conn)
+    gap = int(cfg["shares.max_snapshot_gap_days"])
+    by_company, ambiguous, unmapped, auto = _company_securities(conn, cfg)
     sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
-    refs = {c: mapping.reference_security(s) for c, s in by_company.items()}
     class_secs = {c: mapping.class_securities(s) for c, s in by_company.items()}
-    events = _applied_events(conn)
 
     sector = {c: s for c, s in conn.execute("SELECT cvm_code, cvm_sector FROM company")}
     sector.update(
@@ -357,12 +542,30 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
         if d == "include"
     }
 
+    # Ações do FRE (retratos por documento) e eventos por empresa.
+    capital_rows: dict[int, list] = defaultdict(list)
+    for fid, cvm, received, ctype, approved, common, pref in conn.execute(
+        """
+        SELECT f.id, f.cvm_code, f.received_date, c.capital_type, c.approved_on,
+               c.shares_common, c.shares_pref
+        FROM fre_capital c JOIN filing f ON f.id = c.filing_id
+        """
+    ):
+        capital_rows[cvm].append((fid, received, ctype, approved, common, pref))
+    snapshots = {c: shares_mod.snapshots_from_capital(r) for c, r in capital_rows.items()}
+    events: dict[int, list] = defaultdict(list)
+    for cvm, d, factor, known, before, after in conn.execute(
+        "SELECT cvm_code, event_date, factor, known_from, shares_before, shares_after"
+        " FROM company_event ORDER BY event_date"
+    ):
+        events[cvm].append((d, factor, before, after, known))
+
     # Todas as versões com fatos; a escolhida em cada data-base depende de received_date.
     rows = conn.execute(
         """
         SELECT a.filing_id, a.cvm_code, a.reference_date, f.version, f.received_date,
                sf.collected_at, a.profit, a.equity, a.jcp, a.dividends, a.dividends_source,
-               a.lpa_on, a.lpa_pn, a.shares_on, a.shares_pn
+               a.fre_jcp, a.fre_dividends, a.fre_available_from
         FROM indicator_annual a
         JOIN filing f ON f.id = a.filing_id
         JOIN source_file sf ON sf.id = f.source_file_id
@@ -370,31 +573,22 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
         """
     ).fetchall()
 
-    # Preços de fim de exercício para o valor de mercado (ações da CVM x fechamento da classe).
-    wanted = set()
-    for r in rows:
-        for cls, shares in (("on", r[13]), ("pn", r[14])):
-            sid = class_secs.get(r[1], {}).get(cls)
-            if shares and sid:
-                wanted.add((sid, r[2]))
+    # Preços de fim de exercício para o valor de mercado (ações do FRE x fechamento da classe).
+    wanted = {(sid, r[2]) for r in rows for sid in class_secs.get(r[1], {}).values()}
     prices = _fiscal_year_end_prices(conn, wanted, int(cfg["market.price_lookback_days"]))
 
-    def market_cap(r):
-        cvm, ref, s_on, s_pn = r[1], r[2], r[13], r[14]
-        if s_on is None or s_pn is None:
-            return None
+    def market_cap(cvm, ref, on, pn):
         total = Decimal(0)
-        for cls, shares in (("on", s_on), ("pn", s_pn)):
-            if shares == 0:
+        for cls, qty in (("on", on), ("pn", pn)):
+            if qty == 0:
                 continue
             sid = class_secs.get(cvm, {}).get(cls)
             price = prices.get((sid, ref)) if sid else None
             if price is None:
                 return None
-            total += price * shares
+            total += price * qty
         return total if total > 0 else None
 
-    caps = {r[0]: market_cap(r) for r in rows}
     by_cvm: dict[int, list] = defaultdict(list)
     for r in rows:
         by_cvm[r[1]].append(r)
@@ -413,11 +607,17 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
                     chosen[r[2]] = r
             if not chosen:
                 continue
-            ref_sec = refs.get(cvm)
+            known_full = [
+                (d, f, b, a) for d, f, b, a, known in events.get(cvm, []) if known <= as_of
+            ]
+            known_events = [(d, f) for d, f, _, _ in known_full]
             years: dict[int, screen.YearData] = {}
             for ref, r in chosen.items():
-                lpa = r[11] if (ref_sec is None or ref_sec[0] == "on") else r[12]
-                ev = events.get(ref_sec[1], []) if ref_sec else []
+                jcp, div, source = indicators.choose_dividends(
+                    r[8], r[9], r[10], r[11], r[12], r[13], as_of
+                )
+                found = shares_mod.shares_at(snapshots.get(cvm, []), known_full, ref, as_of, gap)
+                qty = (found[0] + found[1]) if found else None
                 years[ref.year] = screen.YearData(
                     year=ref.year,
                     reference_date=ref,
@@ -426,16 +626,21 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
                     collected_at=r[5],
                     profit=r[6],
                     equity=r[7],
-                    jcp=r[8],
-                    dividends=r[9],
-                    dividends_source=r[10],
-                    lpa=lpa,
-                    market_cap=caps[r[0]],
-                    split_factor=corporate.cumulative_factor(ev, r[4], as_of),
+                    jcp=jcp,
+                    dividends=div,
+                    dividends_source=source,
+                    market_cap=market_cap(cvm, ref, found[0], found[1]) if found else None,
+                    shares=qty,
+                    shares_factor=corporate.cumulative_factor(known_events, ref, as_of),
                     outlier=(cvm, ref) in outliers and (cvm, ref) not in released,
                 )
             res = screen.evaluate(
-                years, liq.get(cvm), p, excluded=sector.get(cvm) in excluded_sectors
+                years,
+                liq.get(cvm),
+                p,
+                excluded=sector.get(cvm) in excluded_sectors,
+                as_of=as_of,
+                listed=cvm in by_company,
             )
             counts[res.status] += 1
             out_result.append((as_of, cvm, res.status, res.data_base, res.collected_at))
@@ -481,6 +686,7 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     ).fetchone()[0]
     return {
         "snapshots": status_counts,
+        "auto_mapped_roots": {r: [c, why] for r, (c, why) in sorted(auto.items())},
         "unmapped_tickers_top": sorted(unmapped, key=lambda t: -t[1])[:15],
         "ambiguous_roots": {k: v for k, v in list(ambiguous.items())[:15]},
         "suspected_events_pending": pending_events,

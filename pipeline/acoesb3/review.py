@@ -30,7 +30,18 @@ def pending(conn: psycopg.Connection) -> dict:
         ORDER BY (e.status = 'auto'), e.event_date DESC
         """
     ).fetchall()
-    return {"outliers": outliers, "events": events}
+    to_enter = [
+        (cvm, name, sorted(y.year for y in years))
+        for cvm, name, years in conn.execute(
+            """
+            SELECT a.cvm_code, coalesce(c.name, '(sem cadastro)'), array_agg(a.reference_date)
+            FROM indicator_annual a LEFT JOIN company c USING (cvm_code)
+            WHERE a.notes->>'dividends' LIKE 'DVA zerada%%'
+            GROUP BY 1, 2 ORDER BY 2, 1
+            """
+        )
+    ]
+    return {"outliers": outliers, "events": events, "dividends_to_enter": to_enter}
 
 
 def decide_outlier(conn, cvm_code: int, reference_date: date, decision: str, note: str | None):

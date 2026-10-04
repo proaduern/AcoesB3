@@ -26,6 +26,10 @@ from .db import connect, get_config, migrate
 log = logging.getLogger("acoesb3")
 
 
+def _dumps(obj) -> str:
+    return json.dumps(obj, default=str, ensure_ascii=False)
+
+
 def _run(conn, job: str, fn):
     run_id = conn.execute(
         "INSERT INTO collection_run (job) VALUES (%s) RETURNING id", (job,)
@@ -38,13 +42,13 @@ def _run(conn, job: str, fn):
         conn.execute(
             "UPDATE collection_run SET status = 'failed', finished_at = now(), detail = %s"
             " WHERE id = %s",
-            (Jsonb({"error": repr(e)}), run_id),
+            (Jsonb({"error": repr(e)}, dumps=_dumps), run_id),
         )
         conn.commit()
         raise
     conn.execute(
         "UPDATE collection_run SET status = 'ok', finished_at = now(), detail = %s WHERE id = %s",
-        (Jsonb(detail), run_id),
+        (Jsonb(detail, dumps=_dumps), run_id),
     )
     conn.commit()
     log.info("%s: %s", job, json.dumps(detail, default=str, ensure_ascii=False))
@@ -139,7 +143,10 @@ def cmd_compute(conn, a) -> None:
     fns = {
         "annual": lambda: compute.build_annual(conn),
         "outliers": lambda: compute.build_outliers(conn, cfg),
-        "events": lambda: compute.detect_events(conn, cfg),
+        "events": lambda: {
+            **compute.detect_events(conn, cfg),
+            **compute.build_company_events(conn, cfg),
+        },
         "screens": lambda: compute.build_screens(conn, cfg),
     }
     for step in COMPUTE_STEPS:
@@ -152,13 +159,16 @@ def cmd_review(conn, a) -> None:
     if r == "list":
         p = review.pending(conn)
         print("Proventos suspeitos (sem decisão ficam FORA do histórico):")
-        for cvm, name, ref, total, med, ratio, dec in p["outliers"]:
+        for cvm, name, ref, total, med, ratio, dec in p["outliers"][: a.limit]:
             print(
                 f"  {cvm:>6} {name[:32]:32} {ref} total={total:,.0f} mediana={med:,.0f}"
                 f" x{ratio:.1f} -> {dec or 'pendente'}"
             )
+        print("Proventos a lançar à mão (DVA zerada depois de o FRE mostrar pagamentos):")
+        for cvm, name, years in p["dividends_to_enter"][: a.limit]:
+            print(f"  {cvm:>6} {name[:40]:40} exercícios {', '.join(map(str, years))}")
         print("Eventos societários detectados (suspected só vale depois de confirmar):")
-        for eid, tk, d, f, ratio, dis, st in p["events"]:
+        for eid, tk, d, f, ratio, dis, st in p["events"][: a.limit]:
             print(f"  id={eid:<6} {tk:8} {d} fator={f} razão={ratio} DISMES mudou={dis} -> {st}")
     elif r == "outlier":
         review.decide_outlier(conn, a.cvm, a.date, a.decision, a.note)
@@ -194,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("migrate")
     sub.add_parser("cad")
     c = sub.add_parser("cvm")
-    c.add_argument("--doc", required=True, choices=["DFP", "ITR", "FCA"])
+    c.add_argument("--doc", required=True, choices=["DFP", "ITR", "FCA", "FRE"])
     for s in (c, sub.add_parser("cotahist")):
         s.add_argument("--from-year", type=int)
         s.add_argument("--to-year", type=int)
@@ -205,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
     rv = sub.add_parser("review", help="revisão manual (outliers, eventos, correções)")
     rs = rv.add_subparsers(dest="review_cmd", required=True)
-    rs.add_parser("list")
+    rl = rs.add_parser("list")
+    rl.add_argument("--limit", type=int, default=100, help="linhas por seção")
     x = rs.add_parser("outlier")
     x.add_argument("--cvm", type=int, required=True)
     x.add_argument("--date", type=date.fromisoformat, required=True, help="data-base da DFP")

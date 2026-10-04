@@ -16,7 +16,7 @@ detectado não é ajustado: ver limitações em docs/fase2.md.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 
@@ -97,3 +97,152 @@ def cumulative_factor(events: list[tuple[date, Decimal]], after: date, until: da
         if after < d <= until:
             f *= factor
     return f
+
+
+# --- Eventos por empresa: FRE (fator oficial) + COTAHIST (data de efeito) ---------------------
+
+
+@dataclass(frozen=True)
+class FreEvent:
+    approved_on: date
+    factor: Decimal  # ações depois / antes
+    known_from: date  # entrega do documento do FRE
+    event_type: str
+    total_before: int | None = None
+    total_after: int | None = None
+
+
+@dataclass(frozen=True)
+class PriceEvent:
+    event_date: date
+    factor: Decimal
+    status: str  # auto, confirmed, suspected ou manual
+
+
+@dataclass(frozen=True)
+class CompanyEvent:
+    event_date: date
+    factor: Decimal
+    source: str  # fre, cotahist, manual
+    date_basis: str  # cotahist (salto de preço) ou approval (data de aprovação)
+    known_from: date
+    event_type: str | None = None
+    shares_before: int | None = None
+    shares_after: int | None = None
+
+
+def dedupe_fre(events: list[FreEvent], days: int, tolerance: Decimal) -> list[FreEvent]:
+    """Documentos do FRE de anos seguidos repetem o mesmo evento, às vezes com a data de
+    aprovação um pouco diferente. Mesmo fator (até ``tolerance``) e datas a até ``days`` dias:
+    um só evento, com a entrega mais antiga. Fatores diferentes na mesma data são eventos
+    distintos (valem os dois)."""
+    out: list[FreEvent] = []
+    for e in sorted(events, key=lambda x: (x.approved_on, x.factor)):
+        for i, kept in enumerate(out):
+            same_date = abs((e.approved_on - kept.approved_on).days) <= days
+            if same_date and abs(e.factor / kept.factor - 1) <= tolerance:
+                out[i] = replace(kept, known_from=min(kept.known_from, e.known_from))
+                break
+        else:
+            out.append(e)
+    return out
+
+
+_STATUS_RANK = {"manual": 3, "confirmed": 2, "auto": 1, "suspected": 0}
+
+
+def dedupe_price(events: list[PriceEvent], days: int = 3, tolerance: Decimal = Decimal("0.03")):
+    """Os papéis de uma empresa (ON, PN, units) saltam juntos: o mesmo evento aparece uma vez
+    por papel. Mesmo fator (até ``tolerance``) e datas a até ``days`` dias: um só, com o status
+    mais forte (manual > confirmado > automático > suspeito)."""
+    out: list[PriceEvent] = []
+    for e in sorted(events, key=lambda x: (x.event_date, x.factor)):
+        for i, kept in enumerate(out):
+            if abs((e.event_date - kept.event_date).days) <= days and (
+                abs(e.factor / kept.factor - 1) <= tolerance
+            ):
+                if _STATUS_RANK[e.status] > _STATUS_RANK[kept.status]:
+                    out[i] = replace(e, event_date=kept.event_date, factor=kept.factor)
+                break
+        else:
+            out.append(e)
+    return out
+
+
+def merge_events(
+    fre_events: list[FreEvent],
+    price_events: list[PriceEvent],
+    coverage_end: date | None,
+    window_days: int,
+    tolerance: Decimal,
+    dedupe_days: int = 45,
+) -> tuple[list[CompanyEvent], list[PriceEvent]]:
+    """Junta eventos do FRE e do COTAHIST de uma empresa.
+
+    O fator vem do FRE (contagem oficial de ações); a data de efeito vem do salto de preço que
+    casa com o evento (até ``window_days`` depois da aprovação, fator dentro de ``tolerance``).
+    Evento do COTAHIST sem par no FRE só entra se for manual, ou se for confirmado/automático e
+    posterior ao que o FRE cobre (``coverage_end``; sem cobertura, entra). Devolve também os
+    eventos do COTAHIST descartados por divergirem do FRE, para revisão.
+    """
+    price_events = dedupe_price(price_events)
+    unique = dedupe_fre(fre_events, dedupe_days, Decimal("0.005"))
+    used: set[int] = set()
+    out: list[CompanyEvent] = []
+    for e in unique:
+        best = None
+        for i, pe in enumerate(price_events):
+            if i in used or pe.status == "manual":
+                continue
+            lag = (pe.event_date - e.approved_on).days
+            if not -10 <= lag <= window_days:
+                continue
+            if abs(pe.factor / e.factor - 1) > tolerance:
+                continue
+            if best is None or abs(lag) < best[0]:
+                best = (abs(lag), i)
+        if best is None:
+            out.append(
+                CompanyEvent(
+                    e.approved_on,
+                    e.factor,
+                    "fre",
+                    "approval",
+                    e.known_from,
+                    e.event_type,
+                    e.total_before,
+                    e.total_after,
+                )  # fmt: skip
+            )
+            continue
+        used.add(best[1])
+        pe = price_events[best[1]]
+        known = e.known_from
+        if pe.status in ("auto", "confirmed"):
+            known = min(known, pe.event_date)
+        out.append(
+            CompanyEvent(
+                pe.event_date,
+                e.factor,
+                "fre",
+                "cotahist",
+                known,
+                e.event_type,
+                e.total_before,
+                e.total_after,
+            )  # fmt: skip
+        )
+    dropped: list[PriceEvent] = []
+    for i, pe in enumerate(price_events):
+        if i in used:
+            continue
+        if pe.status == "manual":
+            out.append(CompanyEvent(pe.event_date, pe.factor, "manual", "cotahist", pe.event_date))
+        elif pe.status in ("auto", "confirmed"):
+            if coverage_end is None or pe.event_date > coverage_end:
+                out.append(
+                    CompanyEvent(pe.event_date, pe.factor, "cotahist", "cotahist", pe.event_date)
+                )
+            else:
+                dropped.append(pe)
+    return sorted(out, key=lambda c: c.event_date), dropped

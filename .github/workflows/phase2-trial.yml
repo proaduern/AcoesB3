@@ -1,0 +1,126 @@
+name: phase2-trial
+# TEMPORÁRIO (remover quando a fase 2 estiver validada, como o da carga da fase 1).
+# Dispara a cada push na branch de desenvolvimento da fase 2.
+#
+# Job "trial": carga completa num Postgres descartável (cad, FCA, DFP, COTAHIST), compute,
+#   relatório de medição e sonda do FRE. Nada toca o Neon.
+# Job "neon": mesma execução no Neon (recarga das DFP + compute + relatório). Só roda se o
+#   trial passar E a mensagem do commit tiver "[neon]". Assim o Neon só é tocado depois que
+#   o que aparecer no trial estiver corrigido.
+on:
+  push:
+    branches: ["claude/fase-2-indicadores-filtro-qy5py2"]
+    paths:
+      - ".github/workflows/phase2-trial.yml"
+      - "pipeline/**"
+      - "scripts/probe_phase2.py"
+      - "scripts/trial_report.py"
+jobs:
+  trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    concurrency:
+      group: phase2-trial
+      cancel-in-progress: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: acoes
+          POSTGRES_PASSWORD: acoes
+          POSTGRES_DB: acoes_trial
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acoes" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEON_DATABASE_URL: postgresql://acoes:acoes@localhost:5432/acoes_trial
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e pipeline
+      - name: Sonda (FRE e descrição das contas)
+        continue-on-error: true
+        run: python scripts/probe_phase2.py
+      # A carga completa leva ~15 min; os dados brutos ficam em cache enquanto o código das
+      # cargas e o esquema delas não mudar (o compute roda sempre, sobre dados restaurados).
+      - name: Restaura a carga do cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: trial-data.sql.gz
+          key: trial-data-v1-${{ hashFiles('pipeline/acoesb3/cvm.py', 'pipeline/acoesb3/cotahist.py', 'pipeline/acoesb3/fre.py', 'pipeline/acoesb3/load.py', 'pipeline/acoesb3/http.py', 'pipeline/migrations/0001_base.sql', 'pipeline/migrations/0002_cvm_b3.sql') }}
+      - name: Esquema
+        run: acoesb3 migrate
+      - name: Carga restaurada
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: gunzip -c trial-data.sql.gz | psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -q
+      - name: Carga - cadastro e FCA
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          time acoesb3 cad
+          time acoesb3 cvm --doc FCA
+      - name: Carga - DFP
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: time acoesb3 cvm --doc DFP
+      - name: Carga - FRE
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: time acoesb3 cvm --doc FRE
+      - name: Carga - COTAHIST
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: time acoesb3 cotahist
+      - name: Guarda a carga no cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          pg_dump "$NEON_DATABASE_URL" --data-only --disable-triggers \
+            -t company -t source_file -t filing -t financial_line -t share_count \
+            -t security -t quote_daily -t company_security -t fre_capital -t fre_split \
+            -t fre_dividend -t collection_run | gzip > trial-data.sql.gz
+          ls -l trial-data.sql.gz
+      - name: Salva no cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: trial-data.sql.gz
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: Compute
+        run: acoesb3 compute
+      - name: Relatório
+        if: ${{ !cancelled() }}
+        run: python scripts/trial_report.py
+      - name: Pendências de revisão
+        if: ${{ !cancelled() }}
+        run: acoesb3 review list --limit 60
+      - if: ${{ !cancelled() }}
+        run: acoesb3 size
+
+  neon:
+    needs: trial
+    if: ${{ contains(github.event.head_commit.message, '[neon]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: neon-writer
+      cancel-in-progress: false
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e pipeline
+      - name: Verifica segredo
+        run: test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
+      - name: Recarrega DFP (contas de DVA de banco e seguradora)
+        run: time acoesb3 cvm --doc DFP --force
+      - name: Carga - FRE
+        run: time acoesb3 cvm --doc FRE
+      - name: Compute
+        run: time acoesb3 compute
+      - name: Relatório
+        run: python scripts/trial_report.py
+      - name: Pendências de revisão
+        run: acoesb3 review list --limit 60
+      - run: acoesb3 size
