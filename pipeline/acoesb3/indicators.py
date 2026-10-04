@@ -23,8 +23,11 @@ diagnósticos do Actions (962 DFP individuais, BB 2020+). Tudo o que faltar vira
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
+
+from .cvm import ascii_upper
 
 Lines = dict[tuple[str, str], Decimal]  # (demonstração, código da conta) -> valor em R$
 
@@ -50,6 +53,16 @@ NEEDED = sorted(
     | {("DVA", c) for pair in DVA.values() for c in pair}
     | {LPA_ON, LPA_PN}
 )
+_NEEDED_SET = frozenset(NEEDED)
+
+
+# Contas do balanço lidas para achar o PL por nome: nível 2 do passivo/PL e filhos do PL.
+BPP_TREE = re.compile(r"^2\.\d\d(\.\d\d)?$")
+_ROOT = re.compile(r"^2\.\d\d$")
+
+
+def wanted_line(statement: str, code: str) -> bool:
+    return (statement, code) in _NEEDED_SET or (statement == "BPP" and bool(BPP_TREE.match(code)))
 
 
 @dataclass
@@ -118,18 +131,47 @@ def _profit(lines: Lines, plan: str | None, consolidated: bool | None, notes: di
     return None
 
 
-def _equity(lines: Lines, consolidated: bool | None, notes: dict):
-    root = "2.08" if ("BPP", "2.08") in lines else "2.03"
+def equity_root(lines: Lines, labels: dict[str, str] | None) -> str | None:
+    """Código da conta do PL: a de nível 2 cujo nome começa por "Patrimônio Líquido"; sem nomes
+    (ou sem achá-la), 2.08 se existir, senão 2.03."""
+    found = sorted(
+        c
+        for c, d in (labels or {}).items()
+        if _ROOT.match(c)
+        and ascii_upper(d).startswith("PATRIMONIO LIQUIDO")
+        and ("BPP", c) in lines
+    )
+    if len(found) == 1:
+        return found[0]
+    if found:
+        return None  # mais de uma candidata: ambíguo
+    return "2.08" if ("BPP", "2.08") in lines else "2.03"
+
+
+def _equity(lines: Lines, consolidated: bool | None, notes: dict, labels=None):
+    root = equity_root(lines, labels)
+    if root is None:
+        notes["equity"] = "mais de uma conta de Patrimônio Líquido no balanço"
+        return None
     total = lines.get(("BPP", root))
-    nci = lines.get(("BPP", f"{root}.09"))
+    nci_codes = [
+        c
+        for c, d in (labels or {}).items()
+        if c.startswith(root + ".") and "NAO CONTROLADORES" in ascii_upper(d)
+    ] or [f"{root}.09"]
+    nci_codes = [c for c in nci_codes if ("BPP", c) in lines]
     if total is None:
         notes["equity"] = f"falta BPP {root}"
         return None
-    if nci is not None:
-        return total - nci
-    if consolidated is False:
+    if len(nci_codes) == 1:
+        return total - lines[("BPP", nci_codes[0])]
+    if not nci_codes and consolidated is False:
         return total  # individual não tem participação de não controladores
-    notes["equity"] = f"falta BPP {root}.09 (não controladores)"
+    notes["equity"] = (
+        f"falta BPP {root}.xx (não controladores)"
+        if not nci_codes
+        else f"mais de uma conta de não controladores: {nci_codes}"
+    )
     return None
 
 
@@ -139,10 +181,12 @@ def extract_annual(
     forced_plan: str | None = None,
     dividend_override: tuple[Decimal, Decimal, str] | None = None,
     consolidated: bool | None = None,
+    labels: dict[str, str] | None = None,
 ) -> Annual:
     """``shares``: (ordinárias, preferenciais, tesouraria ON, tesouraria PN) da DFP, ou None.
 
     ``consolidated``: escopo das demonstrações do documento (financial_line.consolidated).
+    ``labels``: código -> descrição das contas do balanço (para achar o PL por nome).
     """
     a = Annual(consolidated=consolidated)
     a.plan = detect_plan(lines, forced_plan)
@@ -157,7 +201,7 @@ def extract_annual(
     else:
         a.notes["shares"] = "composicao_capital indisponível neste documento"
     a.profit = _profit(lines, a.plan, consolidated, a.notes)
-    a.equity = _equity(lines, consolidated, a.notes)
+    a.equity = _equity(lines, consolidated, a.notes, labels)
     dva_plan, why = _dva_plan(lines)
     if dva_plan:
         jcp, div = DVA[dva_plan]
@@ -203,3 +247,23 @@ def scale_mismatch(dva_total, fre_total, low: Decimal, high: Decimal) -> bool:
         return False
     ratio = fre_total / dva_total
     return low <= ratio <= high or low <= 1 / ratio <= high
+
+
+def suspect_zero_years(
+    years: list[tuple[object, Decimal | None, Decimal | None, str | None]],
+) -> set:
+    """Exercícios com DVA zerada que provavelmente não refletem a distribuição.
+
+    ``years``: (data-base, total da DVA ou manual, total do FRE, fonte do total), por empresa.
+    Depois do último exercício em que o FRE mostra pagamento, se a DVA é zero em todos os anos
+    e nunca positiva, a DVA não está capturando os proventos (Vale, Gerdau): os anos zerados
+    ficam indisponíveis, para lançamento manual, em vez de contar como "não pagou".
+    """
+    with_fre = [ref for ref, _, fre, _ in years if fre is not None and fre > 0]
+    if not with_fre:
+        return set()
+    last = max(with_fre)
+    after = [(ref, total, src) for ref, total, _, src in years if ref > last and src == "dva"]
+    if any(total and total > 0 for _, total, _ in after):
+        return set()
+    return {ref for ref, total, _ in after if total is not None and total == 0}

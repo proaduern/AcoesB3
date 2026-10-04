@@ -47,6 +47,12 @@ Rodada de 03-04/10/2026: carga completa (cadastro, FCA, DFP, COTAHIST) + `comput
 3. Revisar: `acoesb3 review list`; decidir com `review outlier` e `review event`; rodar `compute` de novo.
 4. Informar `screen.excluded_sectors` e, se preciso, `review class`/`review ticker`.
 
+## Decisões de 04/10/2026 (segunda leva)
+
+Outlier só como pico isolado; `not_listed` + mapeamento por nome; DVA zerada após FRE com pagamentos →
+indisponível + lista manual; PL de banco achado pelo nome da conta (migração 0006: `financial_line.description`;
+exige `reload_dfp`). Ver seção 4.1 da especificação.
+
 ## Ficou de fora, e por quê
 
 | Item | Motivo |

@@ -81,26 +81,51 @@ def test_fator_acumulado_so_conta_eventos_no_intervalo():
     assert corporate.cumulative_factor(evs, date(2023, 1, 1), date(2024, 1, 1)) == D(1)
 
 
-# --- Outliers -----------------------------------------------------------------
+# --- Outliers (pico isolado) --------------------------------------------------
+
+PERSIST = D("0.7")
 
 
-def test_outlier_acima_de_2x_a_mediana_de_5_anos():
-    totals = {2016: D(100), 2017: D(110), 2018: D(90), 2019: D(100), 2020: D(105), 2021: D(300)}
-    found = screen.find_outliers(totals, D(2), 5, 3)
+def outliers(totals):
+    return screen.find_outliers(totals, D(2), 5, 3, PERSIST)
+
+
+def test_pico_isolado_e_outlier():
+    totals = {2016: D(100), 2017: D(110), 2018: D(90), 2019: D(100), 2020: D(105), 2021: D(300),
+              2022: D(100)}  # fmt: skip
+    found = outliers(totals)
     assert set(found) == {2021}
     med, ratio, n = found[2021]
     assert med == D(100) and ratio == D(3) and n == 5
 
 
+def test_crescimento_que_se_mantem_nao_e_outlier():
+    # Caso real da medição (WEG 2021-23): passa de 2x a mediana, mas o ano seguinte mantém o nível
+    totals = {2016: D(100), 2017: D(100), 2018: D(100), 2019: D(100), 2020: D(100), 2021: D(300),
+              2022: D(290), 2023: D(310)}  # fmt: skip
+    assert outliers(totals) == {}
+
+
+def test_ultimo_exercicio_sem_ano_seguinte_nao_e_marcado():
+    totals = {2016: D(100), 2017: D(100), 2018: D(100), 2019: D(100), 2020: D(100), 2021: D(900)}
+    assert outliers(totals) == {}
+
+
+def test_ano_seguinte_exatamente_no_limite_nao_e_pico():
+    base = {2016: D(100), 2017: D(100), 2018: D(100), 2019: D(100), 2020: D(100)}
+    assert outliers({**base, 2021: D(300), 2022: D(210)}) == {}  # 210 = 70% de 300
+    assert set(outliers({**base, 2021: D(300), 2022: D(209)})) == {2021}
+
+
 def test_exatamente_2x_nao_e_outlier_e_pouco_historico_nao_marca():
-    totals = {2016: D(100), 2017: D(100), 2018: D(100), 2019: D(200)}
-    assert screen.find_outliers(totals, D(2), 5, 3) == {}
-    assert screen.find_outliers({2018: D(100), 2019: D(900)}, D(2), 5, 3) == {}
+    totals = {2016: D(100), 2017: D(100), 2018: D(100), 2019: D(200), 2020: D(100)}
+    assert outliers(totals) == {}
+    assert outliers({2018: D(100), 2019: D(900), 2020: D(100)}) == {}
 
 
 def test_mediana_zero_nao_permite_concluir():
-    totals = {2016: D(0), 2017: D(0), 2018: D(0), 2019: D(50)}
-    assert screen.find_outliers(totals, D(2), 5, 3) == {}
+    totals = {2016: D(0), 2017: D(0), 2018: D(0), 2019: D(50), 2020: D(0)}
+    assert outliers(totals) == {}
 
 
 # --- Extração conta a conta (linhas reais da DFP 2024) ------------------------
@@ -578,3 +603,109 @@ def test_escala_incerta_entre_fre_e_dva():
     assert not sm(D(100), D(110), lo, hi)  # fontes concordam
     assert not sm(D(100), D(300), lo, hi)  # diferença normal (declarado x pago)
     assert not sm(D(0), D(5), lo, hi) and not sm(None, D(5), lo, hi) and not sm(D(5), None, lo, hi)
+
+
+# --- DVA zerada depois do FRE ----------------------------------------------------------
+
+
+def years_of(*items):
+    return [(date(y, 12, 31), dva, fre, src) for y, dva, fre, src in items]
+
+
+def test_dva_zero_depois_do_ultimo_fre_com_pagamento_e_suspeita():
+    h = years_of(
+        (2020, D(0), D(500), "dva"), (2021, D(0), D(500), "dva"),
+        (2022, D(0), None, "dva"), (2023, D(0), None, "dva"),
+    )  # fmt: skip
+    assert indicators.suspect_zero_years(h) == {date(2022, 12, 31), date(2023, 12, 31)}
+
+
+def test_dva_positiva_depois_do_fre_mostra_que_a_dva_funciona():
+    h = years_of(
+        (2021, D(10), D(500), "dva"), (2022, D(0), None, "dva"), (2023, D(40), None, "dva")
+    )
+    assert indicators.suspect_zero_years(h) == set()
+
+
+def test_sem_fre_ou_com_fre_zero_nao_ha_suspeita_e_manual_nao_e_tocado():
+    assert indicators.suspect_zero_years(years_of((2022, D(0), None, "dva"))) == set()
+    assert (
+        indicators.suspect_zero_years(
+            years_of((2021, D(0), D(0), "dva"), (2022, D(0), None, "dva"))
+        )
+        == set()
+    )
+    h = years_of((2021, D(0), D(500), "dva"), (2022, D(0), None, "manual"))
+    assert indicators.suspect_zero_years(h) == set()
+
+
+# --- Mapeamento automático de ticker por nome -----------------------------------------
+
+
+def auto(unmapped, companies, ratio=0.92, prefix=6):
+    return mapping.auto_map_roots(unmapped, companies, ratio, prefix)
+
+
+COMPANIES = [
+    (25585, ["CSN MINERAÇÃO S.A.", "CSN MINERAÇÃO"]),
+    (20788, ["MARFRIG GLOBAL FOODS S.A.", "MARFRIG"]),
+    (18112, ["AMBEV S/A", "AMBEV"]),
+    (23264, ["AMBEV S.A.", "AMBEV S.A"]),
+    (4057, ["SOUZA CRUZ S.A.", "SOUZA CRUZ SA"]),
+    (21113, ["BICBANCO S.A.", "BICBANCO"]),
+    (22616, ["BANCO BTG PACTUAL S/A", "BANCO BTG PACTUAL S/A"]),
+]
+
+
+def test_nome_normalizado_ignora_acento_pontuacao_e_sufixo():
+    assert mapping.normalize_name("CSN MINERAÇÃO S.A.") == "CSNMINERACAO"
+    assert mapping.normalize_name("Companhia de Locação das Américas") == "DELOCACAODASAMERICAS"
+    assert mapping.normalize_name("AMBEV S/A") == "AMBEV"
+
+
+def test_casos_reais_da_medicao():
+    got = auto({"CMIN": ["CSNMINERACAO"], "MBRF": ["MARFRIG"], "CRUZ": ["SOUZA CRUZ"]}, COMPANIES)
+    assert got["CMIN"] == (25585, "nome igual")
+    assert (
+        got["MBRF"] == (20788, "nome do papel é prefixo do da empresa") or got["MBRF"][0] == 20788
+    )
+    assert got["CRUZ"][0] == 4057  # duas razões sociais da MESMA empresa: não é ambiguidade
+
+
+def test_ambiguo_ou_fraco_nao_mapeia():
+    # AMBEV existe como duas empresas diferentes; 'BTGP BANCO' não parece com 'BICBANCO'
+    assert auto({"AMBV": ["AMBEV"], "BPAC": ["BTGP BANCO"]}, COMPANIES) == {}
+
+
+def test_nome_curto_demais_nao_mapeia_por_prefixo():
+    assert auto({"ABCD": ["MARF"]}, COMPANIES) == {}  # 4 letras < prefixo mínimo
+
+
+def test_equity_found_by_label_when_code_is_not_standard():
+    # Banco com o PL em 2.07 (sem 2.08): achado pelo nome, não controladores pelo nome do filho.
+    from decimal import Decimal as D
+
+    from acoesb3 import indicators
+
+    lines = {("BPP", "2.07"): D(1000), ("BPP", "2.07.05"): D(100), ("BPP", "2.03"): D(50)}
+    labels = {
+        "2.07": "Patrimônio Líquido Consolidado",
+        "2.07.05": "Participação dos Não Controladores",
+        "2.03": "Provisões",
+    }
+    notes: dict = {}
+    assert indicators._equity(lines, True, notes, labels) == D(900)
+    assert not notes
+
+
+def test_equity_without_labels_keeps_standard_codes():
+    from decimal import Decimal as D
+
+    from acoesb3 import indicators
+
+    lines = {("BPP", "2.03"): D(500), ("BPP", "2.03.09"): D(0)}
+    assert indicators._equity(lines, True, {}) == D(500)
+    assert (
+        indicators._equity({("BPP", "2.03"): D(500)}, True, {}) is None
+    )  # falta não controladores
+    assert indicators._equity({("BPP", "2.03"): D(500)}, False, {}) == D(500)

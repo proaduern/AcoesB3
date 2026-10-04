@@ -164,6 +164,9 @@ def cmd_review(conn, a) -> None:
                 f"  {cvm:>6} {name[:32]:32} {ref} total={total:,.0f} mediana={med:,.0f}"
                 f" x{ratio:.1f} -> {dec or 'pendente'}"
             )
+        print("Proventos a lançar à mão (DVA zerada depois de o FRE mostrar pagamentos):")
+        for cvm, name, years in p["dividends_to_enter"][: a.limit]:
+            print(f"  {cvm:>6} {name[:40]:40} exercícios {', '.join(map(str, years))}")
         print("Eventos societários detectados (suspected só vale depois de confirmar):")
         for eid, tk, d, f, ratio, dis, st in p["events"][: a.limit]:
             print(f"  id={eid:<6} {tk:8} {d} fator={f} razão={ratio} DISMES mudou={dis} -> {st}")

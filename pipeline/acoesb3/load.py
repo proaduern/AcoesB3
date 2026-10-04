@@ -285,7 +285,7 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
         cur.execute("DELETE FROM financial_line WHERE filing_id = ANY(%s)", (filing_ids,))
         with cur.copy(
             "COPY financial_line (filing_id, statement, consolidated, account_code, period_start,"
-            " period_end, value, source_scale) FROM STDIN"
+            " period_end, value, source_scale, description) FROM STDIN"
         ) as copy:
             for x in lines:
                 copy.write_row(
@@ -298,6 +298,7 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
                         x.period_end,
                         x.value,
                         x.source_scale,
+                        x.description,
                     )
                 )
         cur.execute("UPDATE filing SET has_lines = true WHERE id = ANY(%s)", (filing_ids,))

@@ -359,18 +359,49 @@ def test_liquidez_volume_e_presenca(conn):
     assert status(conn, 2, TODAY)[0] == "rejected"
 
 
-def test_sem_ticker_no_cadastro_liquidez_indisponivel(conn):
+def test_sem_papel_mapeado_fica_fora_do_universo_ate_haver_ticker(conn):
     w = World(conn)
     w.company(1, "ABCD")
     conn.execute("DELETE FROM company_security")
     conn.commit()
     run(conn)
-    assert criterion(conn, 1, TODAY, "liquidez")[0] == "unavailable"
-    assert status(conn, 1, TODAY)[0] == "insufficient_data"
+    assert status(conn, 1, TODAY)[0] == "not_listed"
+    assert conn.execute(
+        "SELECT count(*) FROM screen_criterion WHERE cvm_code = 1 AND as_of = %s", (TODAY,)
+    ).fetchone() == (0,)
     # override manual de raiz resolve
     review.set_ticker_root(conn, "abcd", 1, "teste")
     run(conn)
     assert criterion(conn, 1, TODAY, "liquidez")[0] == "pass"
+    assert status(conn, 1, TODAY)[0] == "approved"
+
+
+def test_mapeamento_automatico_por_nome_inequivoco(conn):
+    w = World(conn)
+    w.company(1, "ABCD")
+    conn.execute("DELETE FROM company_security")
+    conn.execute("UPDATE company SET name = 'Abcdefghi Participações S.A.' WHERE cvm_code = 1")
+    conn.execute("UPDATE security SET short_name = 'ABCDEFGHI'")
+    conn.commit()
+    out = run(conn)
+    assert out["auto_mapped_roots"] == {"ABCD": [1, "nome do papel é prefixo do da empresa"]}
+    assert status(conn, 1, TODAY)[0] == "approved"
+
+
+def test_mapeamento_automatico_ambiguo_nao_mapeia(conn):
+    w = World(conn)
+    w.company(1, "ABCD")
+    conn.execute("DELETE FROM company_security")
+    conn.execute("UPDATE company SET name = 'Abcdefghi Energia S.A.' WHERE cvm_code = 1")
+    conn.execute(
+        "INSERT INTO company (cvm_code, cnpj, name, status, source)"
+        " VALUES (2, '2', 'Abcdefghi Saneamento S.A.', 'ATIVO', 'cvm_cad')"
+    )
+    conn.execute("UPDATE security SET short_name = 'ABCDEFGHI'")
+    conn.commit()
+    out = run(conn)
+    assert out["auto_mapped_roots"] == {}
+    assert status(conn, 1, TODAY)[0] == "not_listed"
 
 
 def test_empresa_que_parou_de_entregar_dfp_fica_stale_hoje_mas_nao_no_passado(conn):
@@ -383,8 +414,8 @@ def test_empresa_que_parou_de_entregar_dfp_fica_stale_hoje_mas_nao_no_passado(co
     ).fetchone() == (0,)
 
 
-def burst(y):  # dividendos normais e 10x em 2025
-    return (D(200), D(300)) if y == 2025 else (D(20), D(30))
+def burst(y):  # dividendos normais e 10x em 2023 (pico isolado)
+    return (D(200), D(300)) if y == 2023 else (D(20), D(30))
 
 
 def test_outlier_pendente_fica_fora_e_usuario_pode_liberar(conn):
@@ -394,16 +425,16 @@ def test_outlier_pendente_fica_fora_e_usuario_pode_liberar(conn):
     run(conn)
     assert conn.execute("SELECT ratio FROM dividend_outlier WHERE cvm_code = 1").fetchone()[0] == 10
     _, dy_excluded, detail = criterion(conn, 1, TODAY, "dy_medio_liquido")
-    assert detail["outlier_years"] == [2025] and dy_excluded == D("47") / D("800")
+    assert detail["outlier_years"] == [2023] and dy_excluded == D("47") / D("800")
     # usuário libera: o ano entra no histórico
-    review.decide_outlier(conn, 1, date(2025, 12, 31), "include", "bonificação real")
+    review.decide_outlier(conn, 1, date(2023, 12, 31), "include", "bonificação real")
     run(conn)
     _, dy_included, detail = criterion(conn, 1, TODAY, "dy_medio_liquido")
     assert detail["outlier_years"] == [] and dy_included > dy_excluded
     # volta para pendente
-    review.decide_outlier(conn, 1, date(2025, 12, 31), "reset", None)
+    review.decide_outlier(conn, 1, date(2023, 12, 31), "reset", None)
     run(conn)
-    assert criterion(conn, 1, TODAY, "dy_medio_liquido")[2]["outlier_years"] == [2025]
+    assert criterion(conn, 1, TODAY, "dy_medio_liquido")[2]["outlier_years"] == [2023]
     with pytest.raises(ValueError):
         review.decide_outlier(conn, 1, date(2020, 12, 31), "include", None)
 
@@ -624,3 +655,44 @@ def test_escala_incerta_entre_fre_e_dva_deixa_o_ano_indisponivel(conn):
         "FRE e DVA divergem por ~1000x: escala incerta, ano indisponível",
     )
     assert rows[302][:4] == (D(1_000_000), D(2_000_000), "dva", D(1_100_000))
+
+
+def test_dva_zerada_depois_do_fre_fica_indisponivel_e_vai_para_a_lista_manual(conn):
+    # Caso Vale/Gerdau: FRE mostra pagamentos até 2021, DVA zera de 2022 em diante
+    lines = {("DRE", "3.11"): D(10), ("BPP", "2.03"): D(50), ("DVA", "7.08.04.01"): D(0),
+             ("DVA", "7.08.04.02"): D(0)}  # fmt: skip
+    sf = None
+    for year in (2020, 2021, 2022, 2023):
+        insert_dfp_lines(conn, 400 + year, lines, consolidated=False, ref=date(year, 12, 31))
+    conn.execute("UPDATE filing SET cvm_code = 400, cnpj = '400' WHERE cvm_code > 400")
+    conn.execute("UPDATE financial_line SET value = value")
+    conn.commit()
+    sf = conn.execute("SELECT id FROM source_file LIMIT 1").fetchone()[0]
+    for year in (2020, 2021):
+        fid = conn.execute(
+            "INSERT INTO filing (doc_type, cvm_code, cnpj, reference_date, version, doc_id,"
+            " received_date, source_file_id, has_lines) VALUES ('FRE', 400, '400', %s, 1, %s,"
+            " %s, %s, true) RETURNING id",
+            (date(year + 1, 1, 1), 7000 + year, date(year + 1, 5, 30), sf),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO fre_dividend (filing_id, exercise_start, exercise_end, share_type,"
+            " share_class, kind, amount)"
+            " VALUES (%s, %s, %s, 'Ordinária', '', 'Dividendo Obrigatório', 500)",
+            (fid, date(year, 1, 1), date(year, 12, 31)),
+        )
+    conn.commit()
+    out = compute.build_annual(conn)
+    assert out["dva_zero_suspect_years"] == 2  # 2022 e 2023
+    rows = conn.execute(
+        "SELECT reference_date, jcp, dividends_source, fre_dividends, notes->>'dividends'"
+        " FROM indicator_annual WHERE cvm_code = 400 ORDER BY 1"
+    ).fetchall()
+    assert [(r[0].year, r[1], r[2], r[3]) for r in rows] == [
+        (2020, D(0), "dva", D(500)), (2021, D(0), "dva", D(500)), (2022, None, None, None),
+        (2023, None, None, None),
+    ]  # fmt: skip
+    assert "lançar à mão" in rows[2][4]
+    # e aparece na lista de revisão
+    listed = review.pending(conn)["dividends_to_enter"]
+    assert listed == [(400, "(sem cadastro)", [2022, 2023])]

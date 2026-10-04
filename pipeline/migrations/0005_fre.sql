@@ -73,7 +73,8 @@ CREATE TABLE company_event (
 -- Status novo: dados desatualizados.
 ALTER TABLE screen_result DROP CONSTRAINT screen_result_status_check;
 ALTER TABLE screen_result ADD CONSTRAINT screen_result_status_check CHECK (status IN
-    ('approved', 'rejected', 'insufficient_history', 'insufficient_data', 'excluded', 'stale'));
+    ('approved', 'rejected', 'insufficient_history', 'insufficient_data', 'excluded', 'stale',
+     'not_listed'));
 
 INSERT INTO app_config (key, value, description) VALUES
  ('screen.max_data_age_days', '730', 'Empresa cuja última DFP tem mais que isto em relação à data-base fica "stale" (dados desatualizados)'),
@@ -83,6 +84,9 @@ INSERT INTO app_config (key, value, description) VALUES
  ('shares.max_snapshot_gap_days', '550', 'Distância máxima entre o fim do exercício e a entrega do FRE usado para contar as ações'),
  ('events.match_window_days', '200', 'Evento do FRE (data de aprovação) casa com um salto do COTAHIST até esta quantidade de dias depois'),
  ('events.match_tolerance', '0.08', 'Diferença relativa máxima entre o fator do FRE e o do salto de preço para casarem'),
+ ('outlier.persistence', '0.7', 'Pico isolado: o ano seguinte precisa ficar abaixo desta fração do valor do ano para o ano ser outlier'),
+ ('mapping.auto_min_ratio', '0.92', 'Mapeamento automático de ticker por nome: semelhança mínima entre o nome do papel e o da empresa'),
+ ('mapping.auto_min_prefix', '6', 'Mapeamento automático: tamanho mínimo do nome do papel para casar como prefixo do nome da empresa'),
  ('fre.scale_mismatch_min', '500', 'FRE e DVA que diferem por um fator entre este valor e o seguinte (ou o inverso) têm escala incerta: o ano fica indisponível'),
  ('fre.scale_mismatch_max', '2000', 'Limite superior do fator de escala incerta entre FRE e DVA'),
  ('events.dedupe_days', '45', 'Eventos do FRE com o mesmo fator (diferença de até 0,5%) e aprovação com até esta quantidade de dias de distância são o mesmo evento reapresentado')

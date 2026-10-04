@@ -164,7 +164,7 @@ def main():
         out(f"   {name[:36]:36} {ref} total {total:,.0f} mediana {med:,.0f} x{float(ratio):.1f}")
 
     section("Mapeamento de tickers")
-    by_company, ambiguous, unmapped = compute._company_securities(conn)
+    by_company, ambiguous, unmapped, auto = compute._company_securities(conn, cfg)
     out(f"{len(by_company)} empresas com papel; raízes ambíguas: {len(ambiguous)} {dict(list(ambiguous.items())[:10])}")
     out("papéis sem empresa (maior volume): " + ", ".join(f"{t} ({v / 1e9:.1f} bi)" for t, v in sorted(unmapped, key=lambda x: -x[1])[:15]))
 
@@ -237,7 +237,7 @@ def diagnostics(conn, today):
     odd = q(conn, "SELECT count(*), count(DISTINCT ticker) FROM company_security WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z]{4}[0-9]{1,2}$'")[0]
     out(f"tickers fora do padrão 4 letras + número: {odd[0]} linhas, {odd[1]} distintos")
     out("amostra: " + ", ".join(r[0] for r in q(conn, "SELECT DISTINCT ticker FROM company_security WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z]{4}[0-9]{1,2}$' ORDER BY 1 LIMIT 30")))
-    _, _, unmapped = compute._company_securities(conn)
+    _, _, unmapped, _auto = compute._company_securities(conn, cfg)
     for tk, vol in sorted(unmapped, key=lambda x: -x[1])[:12]:
         root = tk[:4]
         hit = q(conn, "SELECT DISTINCT cvm_code, ticker FROM company_security WHERE ticker ILIKE %s LIMIT 3", (root + "%",))
@@ -263,7 +263,7 @@ def decisions_report(conn, cfg, today):
     names = dict(q(conn, "SELECT cvm_code, name FROM company"))
 
     section("Escala FRE x DVA nos exercícios que divergem por fator de mil (DY decide quem está certo)")
-    by_company, _, _ = compute._company_securities(conn)
+    by_company, _, _, _ = compute._company_securities(conn, cfg)
     class_secs = {c: mapping.class_securities(s) for c, s in by_company.items()}
     cap_rows = defaultdict(list)
     for fid, cvm, received, ctype, approved, common, pref in q(
@@ -347,7 +347,7 @@ def decisions_report(conn, cfg, today):
         out(f"   {cvm:>6} {name[:44]:44} {str(cat)[:12]:12} PL {float(eq or 0) / 1e9:9,.1f} bi  {str(sec)[:30]}")
 
     section("Papéis do COTAHIST sem empresa mapeada: total e sugestões por nome (a confirmar)")
-    _, _, unmapped = compute._company_securities(conn)
+    _, _, unmapped, _auto = compute._company_securities(conn, cfg)
     out(f"{len(unmapped)} papéis sem empresa de {sum(len(v) for v in by_company.values()) + len(unmapped)}")
     shorts = dict(q(conn, "SELECT ticker, short_name FROM security"))
     comp = q(conn, "SELECT cvm_code, name, trade_name FROM company")

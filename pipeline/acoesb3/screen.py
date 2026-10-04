@@ -124,20 +124,26 @@ class Result:
 
 
 def find_outliers(
-    totals: dict[int, Decimal], multiple: Decimal, median_years: int, min_history: int
+    totals: dict[int, Decimal],
+    multiple: Decimal,
+    median_years: int,
+    min_history: int,
+    persistence: Decimal,
 ) -> dict[int, tuple[Decimal, Decimal, int]]:
-    """Anos com provento total > ``multiple`` x mediana dos ``median_years`` anos anteriores.
+    """Picos isolados de provento: ano com total > ``multiple`` x mediana dos ``median_years``
+    anos anteriores **e** cujo ano seguinte volta abaixo de ``persistence`` x o valor do ano.
 
-    ``totals``: ano -> JCP + dividendos brutos (só anos com dado). Devolve ano ->
-    (mediana, razão, anos usados). Mediana zero não permite concluir: o ano não é marcado.
+    Crescimento que se mantém é novo patamar, não outlier; por isso o último exercício, sem ano
+    seguinte, nunca é marcado. ``totals``: ano -> JCP + dividendos brutos (só anos com dado).
+    Devolve ano -> (mediana, razão, anos usados). Mediana zero não permite concluir.
     """
     out = {}
     for y, total in totals.items():
         prev = [totals[k] for k in range(y - median_years, y) if k in totals]
-        if len(prev) < min_history:
+        if len(prev) < min_history or (y + 1) not in totals:
             continue
         med = statistics.median(prev)
-        if med > 0 and total > multiple * med:
+        if med > 0 and total > multiple * med and totals[y + 1] < persistence * total:
             out[y] = (med, total / med, len(prev))
     return out
 
@@ -407,9 +413,15 @@ def evaluate(
     p: ScreenParams,
     excluded: bool = False,
     as_of: date | None = None,
+    listed: bool = True,
 ) -> Result:
     if excluded:
         return Result("excluded", None, None, [])
+    if not listed:
+        # Nenhum papel no COTAHIST: emissora sem ações negociadas, fora do universo da bolsa.
+        return Result(
+            "not_listed", max((y.reference_date for y in years.values()), default=None), None, []
+        )
     if not years:
         return Result(
             "insufficient_history",

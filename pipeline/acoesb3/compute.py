@@ -17,8 +17,6 @@ from . import shares as shares_mod
 
 log = logging.getLogger(__name__)
 
-_NEEDED_SET = frozenset(indicators.NEEDED)
-
 
 def load_config(conn: psycopg.Connection) -> dict:
     return {k: v for k, v in conn.execute("SELECT key, value FROM app_config")}
@@ -81,14 +79,16 @@ def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
     }
     stmts = sorted({s for s, _ in indicators.NEEDED})
     codes = sorted({c for _, c in indicators.NEEDED})
-    rows = []
+    facts: list[tuple] = []
     with conn.cursor(name="annual_lines") as cur:
         cur.execute(
             """
-            SELECT fl.filing_id, fl.statement, fl.account_code, fl.value, fl.consolidated
+            SELECT fl.filing_id, fl.statement, fl.account_code, fl.value, fl.consolidated,
+                   fl.description
             FROM financial_line fl JOIN filing f ON f.id = fl.filing_id
             WHERE f.doc_type = 'DFP' AND f.has_lines AND fl.period_end = f.reference_date
-              AND fl.statement = ANY(%s) AND fl.account_code = ANY(%s)
+              AND ((fl.statement = ANY(%s) AND fl.account_code = ANY(%s))
+                   OR (fl.statement = 'BPP' AND fl.account_code ~ '^2\\.[0-9]{2}(\\.[0-9]{2})?$'))
             ORDER BY fl.filing_id
             """,
             (stmts, codes),
@@ -96,15 +96,22 @@ def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
         seen: set[int] = set()
         for fid, grp in itertools.groupby(cur, key=lambda r: r[0]):
             grp = list(grp)
-            lines = {(s, c): v for _, s, c, v, _ in grp if (s, c) in _NEEDED_SET}
+            lines = {(s, c): v for _, s, c, v, _, _ in grp if indicators.wanted_line(s, c)}
+            labels = {c: d for _, s, c, _, _, d in grp if s == "BPP" and d}
             scope = grp[0][4]  # uma carga grava um só escopo por documento
-            rows.append(
-                _annual_row(fid, filings, lines, shares, forced, overrides, scope, fre_div, scale)
+            facts.append(
+                _annual_fact(
+                    fid, filings, lines, shares, forced, overrides, scope, fre_div, scale, labels
+                )
             )
             seen.add(fid)
     # DFP com contas mas sem nenhuma das linhas lidas: registrar tudo como indisponível.
     for fid in filings.keys() - seen:
-        rows.append(_annual_row(fid, filings, {}, shares, forced, overrides, None, fre_div, scale))
+        facts.append(
+            _annual_fact(fid, filings, {}, shares, forced, overrides, None, fre_div, scale)
+        )
+    suspect = _apply_zero_dividend_rule(facts)
+    rows = [_to_row(f) for f in facts]
     with conn.cursor() as cur:
         cur.executemany(
             """
@@ -133,23 +140,21 @@ def build_annual(conn: psycopg.Connection, cfg: dict | None = None) -> dict:
         what: sum(1 for r in rows if r[idx] is None)
         for what, idx in (("profit", 4), ("equity", 5), ("dividends", 7), ("shares_on", 11))
     }
-    return {"annual_rows": len(rows), "plans": dict(plans), "unavailable": missing}
+    return {
+        "annual_rows": len(rows),
+        "plans": dict(plans),
+        "unavailable": missing,
+        "with_fre_dividends": sum(1 for r in rows if r[14] is not None),
+        "dva_zero_suspect_years": suspect,
+    }
 
 
-def _annual_row(
-    fid,
-    filings,
-    lines,
-    shares,
-    forced,
-    overrides,
-    consolidated,
-    fre_div,
-    scale=(Decimal(500), Decimal(2000)),
-):
+def _annual_fact(
+    fid, filings, lines, shares, forced, overrides, consolidated, fre_div, scale, labels=None
+):  # fmt: skip
     cvm, ref = filings[fid]
     a = indicators.extract_annual(
-        lines, shares.get(fid), forced.get(cvm), overrides.get((cvm, ref)), consolidated
+        lines, shares.get(fid), forced.get(cvm), overrides.get((cvm, ref)), consolidated, labels
     )
     a.notes["scope"] = {True: "consolidada", False: "individual", None: "sem demonstrações"}[
         consolidated
@@ -164,6 +169,33 @@ def _annual_row(
         a.jcp = a.dividends = a.dividends_source = None
         fre = (None, None, None)
         a.notes["dividends"] = "FRE e DVA divergem por ~1000x: escala incerta, ano indisponível"
+    return (fid, cvm, ref, a, fre)
+
+
+def _apply_zero_dividend_rule(facts: list[tuple]) -> int:
+    """DVA zerada depois de o FRE mostrar pagamentos: indisponível (ver indicators)."""
+    by_company: dict[int, list] = defaultdict(list)
+    for _fid, cvm, ref, a, fre in facts:
+        total = a.jcp + a.dividends if a.jcp is not None and a.dividends is not None else None
+        fre_total = fre[0] + fre[1] if fre[0] is not None else None
+        by_company[cvm].append((ref, total, fre_total, a.dividends_source))
+    flagged = {
+        cvm: indicators.suspect_zero_years(sorted(y, key=lambda t: t[0]))
+        for cvm, y in by_company.items()
+    }
+    n = 0
+    for _fid, cvm, ref, a, _fre in facts:
+        if ref in flagged.get(cvm, ()):
+            a.jcp = a.dividends = a.dividends_source = None
+            a.notes["dividends"] = (
+                "DVA zerada depois de o FRE mostrar pagamentos: indisponível, lançar à mão"
+            )
+            n += 1
+    return n
+
+
+def _to_row(fact):
+    fid, cvm, ref, a, fre = fact
     return (
         fid, cvm, ref, a.plan, a.profit, a.equity, a.jcp, a.dividends, a.dividends_source,
         a.lpa_on, a.lpa_pn, a.shares_on, a.shares_pn, Jsonb(a.notes), *fre,
@@ -201,7 +233,11 @@ def build_outliers(conn: psycopg.Connection, cfg: dict) -> dict:
     rows = []
     for cvm, totals in by_company.items():
         found = screen.find_outliers(
-            totals, p.outlier_multiple, p.outlier_median_years, p.outlier_min_history
+            totals,
+            p.outlier_multiple,
+            p.outlier_median_years,
+            p.outlier_min_history,
+            Decimal(str(cfg["outlier.persistence"])),
         )
         for y, (med, ratio, n) in found.items():
             rows.append((cvm, refs[(cvm, y)], totals[y], med, ratio, n))
@@ -296,8 +332,10 @@ def snapshot_dates(today: date, first_year: int) -> list[date]:
     return sorted({d for d in ends if d < today} | {today})
 
 
-def _company_securities(conn):
-    """cvm_code -> [(security_id, ticker, volume total)] e diagnósticos do mapeamento."""
+def _company_securities(conn, cfg: dict | None = None):
+    """cvm_code -> [(security_id, ticker, volume total)], raízes ambíguas, papéis sem empresa e o
+    que o mapeamento automático por nome resolveu (raiz -> (cvm_code, motivo))."""
+    cfg = cfg or load_config(conn)
     fca = [
         (t, c)
         for t, c in conn.execute(
@@ -306,19 +344,35 @@ def _company_securities(conn):
     ]
     over = dict(conn.execute("SELECT ticker_root, cvm_code FROM ticker_company_override"))
     root_map, ambiguous = mapping.build_root_map(fca, over)
+    secs = conn.execute(
+        "SELECT s.id, s.ticker, s.short_name, coalesce(sum(q.volume), 0) FROM security s"
+        " LEFT JOIN quote_daily q ON q.security_id = s.id GROUP BY s.id, s.ticker, s.short_name"
+    ).fetchall()
+    unmapped_names: dict[str, list[str]] = defaultdict(list)
+    for _sid, ticker, short, _vol in secs:
+        root = mapping.ticker_root(ticker)
+        if root and root not in root_map and root not in ambiguous and short:
+            unmapped_names[root].append(short)
+    companies = [
+        (c, [n, t]) for c, n, t in conn.execute("SELECT cvm_code, name, trade_name FROM company")
+    ]
+    auto = mapping.auto_map_roots(
+        unmapped_names,
+        companies,
+        float(cfg["mapping.auto_min_ratio"]),
+        int(cfg["mapping.auto_min_prefix"]),
+    )
+    root_map = {**{r: c for r, (c, _) in auto.items()}, **root_map}
     by_company: dict[int, list] = defaultdict(list)
     unmapped = []
-    for sid, ticker, vol in conn.execute(
-        "SELECT s.id, s.ticker, coalesce(sum(q.volume), 0) FROM security s"
-        " LEFT JOIN quote_daily q ON q.security_id = s.id GROUP BY s.id, s.ticker"
-    ):
+    for sid, ticker, _short, vol in secs:
         root = mapping.ticker_root(ticker)
         cvm = root_map.get(root) if root else None
         if cvm is None:
             unmapped.append((ticker, float(vol)))
         else:
             by_company[cvm].append((sid, ticker, float(vol)))
-    return by_company, ambiguous, unmapped
+    return by_company, ambiguous, unmapped, auto
 
 
 def _fiscal_year_end_prices(conn, wanted: set[tuple[int, date]], lookback: int):
@@ -377,7 +431,7 @@ def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
     window = int(cfg["events.match_window_days"])
     tol = Decimal(str(cfg["events.match_tolerance"]))
     dedupe = int(cfg["events.dedupe_days"])
-    by_company, _, _ = _company_securities(conn)
+    by_company, _, _, _ = _company_securities(conn, cfg)
     sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
     fre_events: dict[int, list] = defaultdict(list)
     for cvm, approved, before, after, received, kind in conn.execute(
@@ -467,7 +521,7 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     p = screen.ScreenParams.from_config(cfg)
     excluded_sectors = set(cfg["screen.excluded_sectors"])
     gap = int(cfg["shares.max_snapshot_gap_days"])
-    by_company, ambiguous, unmapped = _company_securities(conn)
+    by_company, ambiguous, unmapped, auto = _company_securities(conn, cfg)
     sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
     class_secs = {c: mapping.class_securities(s) for c, s in by_company.items()}
 
@@ -586,6 +640,7 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
                 p,
                 excluded=sector.get(cvm) in excluded_sectors,
                 as_of=as_of,
+                listed=cvm in by_company,
             )
             counts[res.status] += 1
             out_result.append((as_of, cvm, res.status, res.data_base, res.collected_at))
@@ -631,6 +686,7 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     ).fetchone()[0]
     return {
         "snapshots": status_counts,
+        "auto_mapped_roots": {r: [c, why] for r, (c, why) in sorted(auto.items())},
         "unmapped_tickers_top": sorted(unmapped, key=lambda t: -t[1])[:15],
         "ambiguous_roots": {k: v for k, v in list(ambiguous.items())[:15]},
         "suspected_events_pending": pending_events,
