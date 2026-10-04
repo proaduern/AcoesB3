@@ -363,6 +363,8 @@ def decisions_report(conn, cfg, today):
 
     section("Patrimônio indisponível (2020+): motivo e contas de balanço presentes")
     out(str(dict(q(conn, "SELECT notes->>'equity', count(*) FROM indicator_annual WHERE equity IS NULL AND reference_date >= '2020-01-01' GROUP BY 1"))))
+    for cvm, nm, ref in q(conn, "SELECT a.cvm_code, c.name, a.reference_date FROM indicator_annual a LEFT JOIN company c ON c.cvm_code = a.cvm_code WHERE a.equity IS NULL AND a.reference_date >= '2020-01-01'"):
+        out(f"   sem PL: {nm} ({cvm}) {ref}")
     for cvm in (1023,):
         for fid, ref in q(conn, "SELECT id, reference_date FROM filing WHERE doc_type='DFP' AND cvm_code=%s AND reference_date='2025-12-31' AND has_lines", (cvm,)):
             codes = q(conn, "SELECT account_code, value, description, consolidated FROM financial_line WHERE filing_id=%s AND statement='BPP' ORDER BY 1", (fid,))
