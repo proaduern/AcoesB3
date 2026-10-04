@@ -1,8 +1,9 @@
 # Fase 2 — Indicadores, filtro e outliers
 
-**Estado (04/10/2026)**: código e testes prontos (147 testes, lint limpo); PR #3 já mergeado com a primeira
-versão. Esta segunda leva corrige o que a primeira medição com dados reais mostrou e adota o FRE. A medição
-roda num Postgres descartável do Actions (workflow temporário `phase2-trial`); **ainda não rodou no Neon**.
+**Estado (04/10/2026)**: código e testes prontos (172 testes, lint limpo); PRs #3 e #4 mergeados. A medição
+em Postgres descartável e a execução no Neon (`compute` com recarga das DFP e carga do FRE) foram feitas e os
+workflows temporários foram removidos. Pendente: revisão manual (295 outliers, eventos suspeitos, proventos a
+lançar à mão) e `screen.excluded_sectors`.
 
 ## O que a primeira medição com dados reais mostrou
 
@@ -33,19 +34,18 @@ Rodada de 03-04/10/2026: carga completa (cadastro, FCA, DFP, COTAHIST) + `comput
 - `screen.py`: critérios, outliers, status (inclui `stale`).
 - `compute.py`: fatos anuais, outliers, eventos (por papel e por empresa) e retratos por data.
 - `review.py` / `acoesb3 review`: revisão manual (outliers, eventos, proventos, setor, plano, ticker).
-- Workflows: `compute` (manual), `phase2-trial` e `fre-probe` (temporários).
+- Workflow: `compute` (manual). Os workflows temporários de medição e sonda foram removidos.
 - Testes: parsers com linhas reais, extração com as linhas reais de WEG, Itaú e BB Seguridade, lógica pura,
   e integração no Postgres (ponto no tempo, outliers, eventos, FRE × DVA, liquidez, setor, `stale`).
   Mutações em precedência do FRE, ajuste de retrato e regra de 2 anos derrubam testes.
 
 ## Como rodar no Neon
 
-1. Merge na branch padrão.
-2. Actions → `compute` com `reload_dfp` e `load_fre` marcados na primeira vez (recarga das DFP grava as contas
-   de DVA de banco/seguradora; o FRE traz ações, eventos e proventos). Ou, antes disso, o job `neon` do
-   `phase2-trial` (commit com o marcador de execução no Neon), que faz o mesmo e imprime o relatório.
-3. Revisar: `acoesb3 review list`; decidir com `review outlier` e `review event`; rodar `compute` de novo.
-4. Informar `screen.excluded_sectors` e, se preciso, `review class`/`review ticker`.
+1. Primeira vez (feita em 04/10/2026): Actions → `compute` com `reload_dfp` e `load_fre` marcados (a recarga
+   das DFP grava as contas de DVA de banco/seguradora e as descrições das contas; o FRE traz ações, eventos e
+   proventos). Depois, `compute` sem as opções.
+2. Revisar: `acoesb3 review list`; decidir com `review outlier` e `review event`; rodar `compute` de novo.
+3. Informar `screen.excluded_sectors` e, se preciso, `review class`/`review ticker`.
 
 ## Decisões de 04/10/2026 (segunda leva)
 
