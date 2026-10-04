@@ -221,18 +221,24 @@ def choose_dividends(
     fre_dividends: Decimal | None,
     fre_available_from,
     as_of=None,
+    prefer: str = "fre",
 ) -> tuple[Decimal | None, Decimal | None, str | None]:
-    """Proventos do exercício: valor manual (ou de outra fonte) > FRE > DVA.
+    """Proventos do exercício: valor manual (ou de outra fonte) > FRE > DVA (``prefer="fre"``), ou
+    manual > DVA > FRE (``prefer="dva"``; o FRE entra quando a DVA falta ou é zero).
 
     O FRE só vale se já tinha sido entregue em ``as_of`` (ponto no tempo). Sem nenhum, None.
     """
     if source not in (None, "dva") and jcp is not None and dividends is not None:
         return jcp, dividends, source
-    if (
+    fre_ok = (
         fre_jcp is not None
         and fre_dividends is not None
         and (as_of is None or (fre_available_from is not None and fre_available_from <= as_of))
-    ):
+    )
+    dva_ok = jcp is not None and dividends is not None
+    if prefer == "dva" and dva_ok and (jcp + dividends > 0 or not fre_ok):
+        return jcp, dividends, source or "dva"
+    if fre_ok:
         return fre_jcp, fre_dividends, "fre"
     if jcp is not None and dividends is not None:
         return jcp, dividends, source or "dva"

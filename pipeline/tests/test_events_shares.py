@@ -236,3 +236,22 @@ def test_salto_duplicado_nao_vira_evento_extra_ao_casar_com_o_fre():
     price = [PE(date(2024, 1, 24), D(4), "auto"), PE(date(2024, 1, 24), D(4), "auto")]
     events, dropped = merge(fre, price, coverage=date(2024, 12, 1))
     assert len(events) == 1 and dropped == [] and events[0].date_basis == "cotahist"
+
+
+# --- Salto de preço confirmado pela contagem de ações do FRE ------------------
+
+
+def test_salto_de_preco_confirmado_por_retratos_consecutivos_do_fre():
+    # Engie: 815.927.740 -> 1.142.298.836 ações (x1,4) entre as entregas de mai/2025 e mar/2026
+    snaps = [
+        shares.Snapshot(date(2024, 5, 7), 815_927_740, 0),
+        shares.Snapshot(date(2025, 5, 16), 815_927_740, 0),
+        shares.Snapshot(date(2026, 3, 26), 1_142_298_836, 0),
+    ]
+    tol = D("0.01")
+    assert shares.confirmed_by_snapshots(snaps, date(2025, 11, 27), D("1.4"), tol)
+    # fator diferente, data fora do intervalo entre os retratos ou sem retratos: não confirma
+    assert not shares.confirmed_by_snapshots(snaps, date(2025, 11, 27), D("1.25"), tol)
+    assert not shares.confirmed_by_snapshots(snaps, date(2024, 11, 27), D("1.4"), tol)
+    assert not shares.confirmed_by_snapshots([], date(2025, 11, 27), D("1.4"), tol)
+    assert not shares.confirmed_by_snapshots(snaps, date(2026, 6, 1), D("1.4"), tol)

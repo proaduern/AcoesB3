@@ -205,7 +205,7 @@ def _to_row(fact):
 # --- 2. Outliers ------------------------------------------------------------
 
 
-def _best_annual(conn) -> dict[tuple[int, date], tuple]:
+def _best_annual(conn, prefer: str = "fre") -> dict[tuple[int, date], tuple]:
     """Versão mais recente de cada (empresa, data-base) com fatos anuais, com os proventos
     já escolhidos (manual > FRE > DVA), sem olhar a data de entrega."""
     best: dict[tuple[int, date], tuple] = {}
@@ -217,14 +217,14 @@ def _best_annual(conn) -> dict[tuple[int, date], tuple]:
         ORDER BY a.cvm_code, a.reference_date, f.version
         """
     ):
-        j, d, _ = indicators.choose_dividends(jcp, div, src, fjcp, fdiv, None)
+        j, d, _ = indicators.choose_dividends(jcp, div, src, fjcp, fdiv, None, prefer=prefer)
         best[(cvm, ref)] = (ver, j, d)
     return best
 
 
 def build_outliers(conn: psycopg.Connection, cfg: dict) -> dict:
     p = screen.ScreenParams.from_config(cfg)
-    best = _best_annual(conn)
+    best = _best_annual(conn, cfg["dividends.preferred_source"])
     by_company: dict[int, dict[int, Decimal]] = defaultdict(dict)
     for (cvm, ref), (_ver, jcp, div) in best.items():
         if jcp is not None and div is not None:
@@ -270,8 +270,27 @@ def split_params(cfg: dict) -> corporate.SplitParams:
     )
 
 
+def _share_snapshots(conn) -> dict[int, list]:
+    """cvm_code -> retratos do capital social do FRE (um por documento)."""
+    capital_rows: dict[int, list] = defaultdict(list)
+    for fid, cvm, received, ctype, approved, common, pref in conn.execute(
+        """
+        SELECT f.id, f.cvm_code, f.received_date, c.capital_type, c.approved_on,
+               c.shares_common, c.shares_pref
+        FROM fre_capital c JOIN filing f ON f.id = c.filing_id
+        """
+    ):
+        capital_rows[cvm].append((fid, received, ctype, approved, common, pref))
+    return {c: shares_mod.snapshots_from_capital(r) for c, r in capital_rows.items()}
+
+
 def detect_events(conn: psycopg.Connection, cfg: dict) -> dict:
     sp = split_params(cfg)
+    by_company, _, _, _ = _company_securities(conn, cfg)
+    sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
+    snapshots = _share_snapshots(conn)
+    snap_tol = Decimal(str(cfg["events.snapshot_tolerance"]))
+    confirmed = 0
     found: list[tuple] = []
     n_sec = 0
     with conn.cursor(name="quotes_for_events") as cur:
@@ -283,8 +302,19 @@ def detect_events(conn: psycopg.Connection, cfg: dict) -> dict:
             n_sec += 1
             qs = [(d, c, dis) for _, d, c, dis in grp]
             for e in corporate.detect_events(qs, sp):
+                status = e.status
+                cvm = sec_company.get(sid)
+                if (
+                    status == "suspected"
+                    and cvm is not None
+                    and shares_mod.confirmed_by_snapshots(
+                        snapshots.get(cvm, []), e.event_date, e.factor, snap_tol
+                    )
+                ):
+                    status = "auto"  # a contagem de ações do FRE cresceu pelo mesmo fator
+                    confirmed += 1
                 found.append(
-                    (sid, e.event_date, e.factor, e.observed_ratio, e.dismes_changed, e.status)
+                    (sid, e.event_date, e.factor, e.observed_ratio, e.dismes_changed, status)
                 )
     with conn.cursor() as cur:
         cur.execute(
@@ -321,7 +351,11 @@ def detect_events(conn: psycopg.Connection, cfg: dict) -> dict:
         )
     conn.commit()
     counts = dict(conn.execute("SELECT status, count(*) FROM corporate_event GROUP BY status"))
-    return {"securities_scanned": n_sec, "events": counts}
+    return {
+        "securities_scanned": n_sec,
+        "events": counts,
+        "confirmed_by_fre_shares": confirmed,
+    }
 
 
 # --- 4. Retratos do filtro --------------------------------------------------
@@ -543,16 +577,7 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     }
 
     # Ações do FRE (retratos por documento) e eventos por empresa.
-    capital_rows: dict[int, list] = defaultdict(list)
-    for fid, cvm, received, ctype, approved, common, pref in conn.execute(
-        """
-        SELECT f.id, f.cvm_code, f.received_date, c.capital_type, c.approved_on,
-               c.shares_common, c.shares_pref
-        FROM fre_capital c JOIN filing f ON f.id = c.filing_id
-        """
-    ):
-        capital_rows[cvm].append((fid, received, ctype, approved, common, pref))
-    snapshots = {c: shares_mod.snapshots_from_capital(r) for c, r in capital_rows.items()}
+    snapshots = _share_snapshots(conn)
     events: dict[int, list] = defaultdict(list)
     for cvm, d, factor, known, before, after in conn.execute(
         "SELECT cvm_code, event_date, factor, known_from, shares_before, shares_after"
@@ -614,8 +639,9 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
             years: dict[int, screen.YearData] = {}
             for ref, r in chosen.items():
                 jcp, div, source = indicators.choose_dividends(
-                    r[8], r[9], r[10], r[11], r[12], r[13], as_of
-                )
+                    r[8], r[9], r[10], r[11], r[12], r[13], as_of,
+                    prefer=cfg["dividends.preferred_source"],
+                )  # fmt: skip
                 found = shares_mod.shares_at(snapshots.get(cvm, []), known_full, ref, as_of, gap)
                 qty = (found[0] + found[1]) if found else None
                 years[ref.year] = screen.YearData(

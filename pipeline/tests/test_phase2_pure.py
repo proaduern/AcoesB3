@@ -709,3 +709,32 @@ def test_equity_without_labels_keeps_standard_codes():
         indicators._equity({("BPP", "2.03"): D(500)}, True, {}) is None
     )  # falta não controladores
     assert indicators._equity({("BPP", "2.03"): D(500)}, False, {}) == D(500)
+
+
+def test_fonte_preferida_dos_proventos():
+    from datetime import date
+    from decimal import Decimal as D
+
+    from acoesb3 import indicators
+
+    fre = (D(1), D(100), date(2022, 6, 1))
+    # FRE preferido (regra atual): o FRE vence a DVA
+    assert indicators.choose_dividends(D(2), D(200), "dva", *fre) == (D(1), D(100), "fre")
+    # DVA preferida: a DVA vence se tiver valor; o FRE cobre DVA zerada ou ausente
+    assert indicators.choose_dividends(D(2), D(200), "dva", *fre, prefer="dva") == (
+        D(2), D(200), "dva",
+    )  # fmt: skip
+    assert indicators.choose_dividends(D(0), D(0), "dva", *fre, prefer="dva") == (
+        D(1), D(100), "fre",
+    )  # fmt: skip
+    assert indicators.choose_dividends(None, None, None, *fre, prefer="dva") == (
+        D(1), D(100), "fre",
+    )  # fmt: skip
+    # sem FRE, a DVA zerada continua valendo (a regra da DVA zerada trata o resto)
+    assert indicators.choose_dividends(D(0), D(0), "dva", None, None, None, prefer="dva") == (
+        D(0), D(0), "dva",
+    )  # fmt: skip
+    # valor manual vence qualquer fonte
+    assert indicators.choose_dividends(D(5), D(5), "manual", *fre, prefer="dva") == (
+        D(5), D(5), "manual",
+    )  # fmt: skip

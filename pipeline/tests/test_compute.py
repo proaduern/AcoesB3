@@ -508,6 +508,23 @@ def test_proventos_do_fre_substituem_a_dva_zerada(conn):
     assert status(conn, 1, TODAY)[0] == "approved"
 
 
+def test_fonte_preferida_dva_usa_a_dva_e_deixa_o_fre_para_quando_ela_zera(conn):
+    def dva(y):  # DVA diferente do FRE (20 + 30 = 50) em todos os anos
+        return (D(40), D(60))
+
+    World(conn).company(1, "ABCD", dividends=dva, fre_dividends=fre_pays)
+    run(conn)
+    assert set(criterion(conn, 1, TODAY, "proventos_todos_os_anos")[2]["sources"].values()) == {
+        "fre"
+    }
+    conn.execute("UPDATE app_config SET value = '\"dva\"' WHERE key = 'dividends.preferred_source'")
+    conn.commit()
+    run(conn)
+    assert set(criterion(conn, 1, TODAY, "proventos_todos_os_anos")[2]["sources"].values()) == {
+        "dva"
+    }
+
+
 def test_sem_fre_a_dva_zerada_reprova(conn):
     World(conn).company(1, "ABCD", dividends=no_dva)
     run(conn)
@@ -593,7 +610,33 @@ def test_evento_do_fre_fixa_o_fator_e_o_salto_de_preco_a_data(conn):
     assert drops(conn) == []
 
 
+def _jump_without_split_file(conn, w):
+    sec = conn.execute("SELECT id FROM security").fetchone()[0]
+    # salto de 50% sem mudança de DISMES: suspeito
+    for d, close in ((date(2022, 5, 31), D("20")), (date(2022, 6, 1), D("10"))):
+        conn.execute(
+            "INSERT INTO quote_daily VALUES (%s, %s, %s, %s, %s, %s, %s, 1, 1, 1000, 1, %s)",
+            (sec, d, close, close, close, close, close, w.sf),
+        )
+    conn.commit()
+
+
+def test_salto_suspeito_vira_automatico_se_as_acoes_do_fre_dobraram(conn):
+    # ações do FRE passam de 1000 para 2000 entre as entregas que cercam o salto de preço
+    w = split_world(conn)
+    _jump_without_split_file(conn, w)
+    out = run(conn)
+    assert out["suspected_events_pending"] == 0
+    assert conn.execute("SELECT factor, status FROM corporate_event").fetchall() == [
+        (D("2"), "auto")
+    ]
+    assert drops(conn) == []
+
+
 def test_evento_suspeito_so_vale_depois_de_confirmado(conn):
+    # sem a confirmação pelas ações do FRE (tolerância negativa), o evento espera revisão
+    conn.execute("UPDATE app_config SET value = '-1' WHERE key = 'events.snapshot_tolerance'")
+    conn.commit()
     w = split_world(conn)
     sec = conn.execute("SELECT id FROM security").fetchone()[0]
     # salto de 50% sem mudança de DISMES: suspeito
