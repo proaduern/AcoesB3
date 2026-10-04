@@ -50,6 +50,8 @@ def source_check(dva, fre, low=Decimal("0.9"), high=Decimal("1.1")) -> str:
         return "sem fonte"
     if dva is None or fre is None:
         return "só " + ("DVA" if fre is None else "FRE")
+    if dva == 0 and fre > 0:
+        return "DVA zerada"  # a DVA não captura os proventos (caso Vale/Gerdau); vale o FRE
     if dva <= 0 or fre <= 0:
         return "divergem"
     return "concordam" if low <= fre / dva <= high else "divergem"
@@ -58,6 +60,7 @@ def source_check(dva, fre, low=Decimal("0.9"), high=Decimal("1.1")) -> str:
 HINTS = {
     "concordam": "duas fontes iguais: pagamento real; decida include/exclude",
     "divergem": "fontes diferentes: provável erro de dado ou de escala; confira e lance o valor",
+    "DVA zerada": "DVA zerada e FRE com valor: o total é o do FRE; provável pagamento real",
     "só DVA": "uma fonte só: confirme no release antes de decidir",
     "só FRE": "uma fonte só: confirme no release antes de decidir",
     "sem fonte": "sem total de proventos para conferir",

@@ -461,6 +461,8 @@ def test_conferencia_das_fontes():
     assert review.source_check(D(5), None) == "só DVA"
     assert review.source_check(None, None) == "sem fonte"
     assert review.source_check(D(0), D(0)) == "divergem"
+    assert review.source_check(D(0), D(1500)) == "DVA zerada"
+    assert review.source_check(D(100), D(0)) == "divergem"
 
 
 def no_dva(y):  # a DVA zerada (caso Vale/Gerdau do diagnóstico)
