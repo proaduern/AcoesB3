@@ -37,7 +37,10 @@ def rows(zf, name):
 
 def find(zf, suffix, year):
     n = f"fre_cia_aberta_{suffix}_{year}.csv" if suffix else f"fre_cia_aberta_{year}.csv"
-    return n if n in zf.namelist() else None
+    if n in zf.namelist():
+        return n
+    print(f"   !! {n} não existe; parecidos: {[x for x in zf.namelist() if suffix.split('_')[-1] in x][:6]}")
+    return None
 
 
 def is_target(name):
@@ -56,6 +59,12 @@ def main():
         zf = fetch_zip(f"{CVM}/FRE/DADOS/fre_cia_aberta_{y}.zip")
         if zf:
             fre[y] = zf
+            print(f"   [{y}] {len(zf.namelist())} arquivos")
+    base = set(fre[min(fre)].namelist())
+    for y, zf in fre.items():
+        names = {re.sub(r"_\d{4}\.csv$", ".csv", n) for n in zf.namelist()}
+        ref = {re.sub(r"_\d{4}\.csv$", ".csv", n) for n in base}
+        print(f"[{y}] arquivos que existem no 2010 e não aqui: {sorted(ref - names)}; novos: {sorted(names - ref)}")
 
     print("\n===== ÍNDICE (fre_cia_aberta_AAAA.csv) =====")
     for y, zf in fre.items():
@@ -78,6 +87,8 @@ def main():
     print("\n===== CAPITAL SOCIAL =====")
     for y, zf in fre.items():
         n = find(zf, "capital_social", y)
+        if not n:
+            continue
         rs = rows(zf, n)
         idx = rows(zf, find(zf, "", y))
         print(f"[{y}] {len(rs)} linhas")
@@ -95,6 +106,8 @@ def main():
     print("\n===== DESDOBRAMENTO / GRUPAMENTO / BONIFICAÇÃO =====")
     for y, zf in fre.items():
         n = find(zf, "capital_social_desdobramento", y)
+        if not n:
+            continue
         rs = rows(zf, n)
         print(f"[{y}] {len(rs)} linhas; Tipo_Evento: {Counter(r['Tipo_Evento'] for r in rs).most_common()}")
         ap = sorted(r["Data_Aprovacao"] for r in rs if r["Data_Aprovacao"])
@@ -105,8 +118,8 @@ def main():
         ratio_bad = sum(1 for r in rs if not r["Quantidade_Total_Acoes_Antes_Aprovacao"] or not r["Quantidade_Total_Acoes_Depois_Aprovacao"])
         print(f"      linhas sem quantidade antes/depois: {ratio_bad}")
     zf = fre.get(2025)
-    if zf:
-        n = find(zf, "capital_social_aumento", 2025)
+    n = find(zf, "capital_social_aumento", 2025) if zf else None
+    if n:
         rs = rows(zf, n)
         print(f"[2025] capital_social_aumento: {len(rs)} linhas; Tipo_Subscricao: {Counter(r['Tipo_Subscricao'] for r in rs).most_common(8)}")
 
@@ -114,6 +127,8 @@ def main():
     exercises = defaultdict(set)
     for y, zf in fre.items():
         n = find(zf, "distribuicao_dividendos_classe_acao", y)
+        if not n:
+            continue
         rs = rows(zf, n)
         print(f"[{y}] {len(rs)} linhas; colunas {list(rs[0].keys())[5:]}")
         print(f"      Especie_Acao: {Counter(r['Especie_Acao'] for r in rs).most_common()}")
