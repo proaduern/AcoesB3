@@ -32,6 +32,8 @@ class ScreenParams:
     dps_tolerance: Decimal
     dps_min_pairs: int
     dps_alt_avg_years: int
+    dps_method: str
+    dps_avg_min: int
     tax_jcp: Decimal
     tax_dividend: Decimal
     outlier_multiple: Decimal
@@ -66,6 +68,8 @@ class ScreenParams:
             dps_tolerance=num("screen.dps_drop_tolerance"),
             dps_min_pairs=integer("screen.dps_min_pairs"),
             dps_alt_avg_years=integer("screen.dps_alt_avg_years"),
+            dps_method=str(cfg["screen.dps_method"]),
+            dps_avg_min=integer("screen.dps_avg_min_comparisons"),
             tax_jcp=num("tax.jcp"),
             tax_dividend=num("tax.dividend"),
             outlier_multiple=num("outlier.multiple"),
@@ -363,10 +367,11 @@ def _dps(y: YearData) -> Decimal | None:
 
 def avg_window_drops(
     dps: dict[int, Decimal], keys: list[int], n: int, tolerance: Decimal
-) -> list[int] | None:
-    """Método alternativo (só informativo): queda = média do DPS dos ``n`` últimos anos menor que
-    a dos ``n`` anos anteriores. Precisa dos ``2n - 1`` anos de DPS em volta de cada comparação; sem
-    nenhuma comparação possível devolve None."""
+) -> tuple[list[int], int]:
+    """Queda pela média móvel: a média do DPS dos ``n`` anos até ``k`` é menor que a média móvel
+    do ano anterior (anos ``k-n`` a ``k-1``). Cada comparação precisa de ``n + 1`` anos de DPS.
+
+    Devolve (anos de queda, quantas comparações foram possíveis)."""
     out, compared = [], 0
     for k in keys:
         recent = [k - i for i in range(n)]
@@ -377,35 +382,43 @@ def avg_window_drops(
             b = sum(dps[y] for y in before) / n
             if a < b * (1 - tolerance):
                 out.append(k)
-    return out if compared else None
+    return out, compared
 
 
 def dps_drops(years, last, p: ScreenParams) -> Criterion:
     """Quedas do dividendo por ação na janela (ver ``_dps``).
 
-    Comparações com ano de outlier ou sem ações são puladas; exige ``dps_min_pairs`` pares.
+    Método ``avg`` (decisão de 04/10/2026): média móvel de ``dps_alt_avg_years`` anos contra a
+    média móvel do ano anterior; ``yearly``: ano contra ano. O outro fica no detalhe, informativo.
+    Anos de outlier ou sem ações não têm DPS e derrubam as comparações que dependem deles.
     """
     name = "queda_dividendo_por_acao"
-    thr = f"<= {p.dps_max_drops} quedas em {p.dps_window} anos"
+    avg = p.dps_method == "avg"
+    what = f"média de {p.dps_alt_avg_years} anos" if avg else "ano contra ano"
+    thr = f"<= {p.dps_max_drops} quedas ({what}) em {p.dps_window} anos"
     keys, bad = _window_or_unavailable(name, thr, years, last, p.dps_window)
     if bad:
         return bad
     dps = {k: v for k in keys if (v := _dps(years[k])) is not None}
     pairs = [(k - 1, k) for k in keys if (k - 1) in dps and k in dps]
-    if len(pairs) < p.dps_min_pairs:
-        return _unavailable(name, thr, "data", comparable_pairs=len(pairs), needed=p.dps_min_pairs)
-    drops = [k for a, k in pairs if dps[k] < dps[a] * (1 - p.dps_tolerance)]
+    yearly = [k for a, k in pairs if dps[k] < dps[a] * (1 - p.dps_tolerance)]
+    moving, compared = avg_window_drops(dps, keys, p.dps_alt_avg_years, p.dps_tolerance)
+    comparisons, needed = (compared, p.dps_avg_min) if avg else (len(pairs), p.dps_min_pairs)
+    if comparisons < needed:
+        return _unavailable(name, thr, "data", comparisons=comparisons, needed=needed, method=what)
+    drops = moving if avg else yearly
     return Criterion(
         name,
         "pass" if len(drops) <= p.dps_max_drops else "fail",
         D(len(drops)),
         thr,
         {
+            "method": p.dps_method,
             "dps": {k: str(v) for k, v in dps.items()},
-            "drop_years": drops,
-            # Método alternativo, só para comparação (não decide o status)
-            "alt_avg_years": p.dps_alt_avg_years,
-            "alt_avg_drop_years": avg_window_drops(dps, keys, p.dps_alt_avg_years, p.dps_tolerance),
+            "drop_years": yearly,
+            "avg_drop_years": moving,
+            "avg_years": p.dps_alt_avg_years,
+            "avg_comparisons": compared,
             "comparable_pairs": len(pairs),
             "sources": {k: years[k].dividends_source for k in keys},
             **_source_detail(years, keys),

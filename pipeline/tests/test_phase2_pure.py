@@ -327,6 +327,8 @@ P = screen.ScreenParams.from_config(
         "screen.dps_drop_tolerance": 0,
         "screen.dps_min_pairs": 6,
         "screen.dps_alt_avg_years": 3,
+        "screen.dps_method": "yearly",
+        "screen.dps_avg_min_comparisons": 4,
         "tax.jcp": 0.15,
         "tax.dividend": 0,
         "outlier.multiple": 2,
@@ -538,6 +540,24 @@ def test_dps_exatamente_3_quedas_passa():
     c = crit(screen.evaluate(ys, LIQ_OK, P), "queda_dividendo_por_acao")
     assert c.detail["drop_years"] == [2017, 2019, 2021]
     assert (c.status, c.value) == ("pass", D(3))
+
+
+def test_dps_decide_pela_media_de_3_anos_quando_o_metodo_e_avg():
+    import dataclasses
+
+    avg = dataclasses.replace(P, dps_method="avg", dps_max_drops=1)
+    ys = good_years()
+    set_shares(ys, (1000, 1100, 1000, 1100, 1000, 1100, 1000, 1100, 1000, 1100))
+    # ano contra ano são 5 quedas, mas a média de 3 anos oscila pouco: o status vem da média
+    c = crit(screen.evaluate(ys, LIQ_OK, avg), "queda_dividendo_por_acao")
+    assert c.detail["method"] == "avg" and c.detail["drop_years"] == [2017, 2019, 2021, 2023, 2025]
+    assert c.detail["avg_comparisons"] == 7  # janela de 10 anos: 2019 a 2025
+    n = len(c.detail["avg_drop_years"])
+    assert (c.status, c.value) == ("pass" if n <= 1 else "fail", D(n))
+    # sem comparações suficientes da média: indisponível
+    few = dataclasses.replace(avg, dps_avg_min=8)
+    c = crit(screen.evaluate(ys, LIQ_OK, few), "queda_dividendo_por_acao")
+    assert c.status == "unavailable" and c.detail["needed"] == 8
 
 
 def test_dps_ajusta_por_evento_depois_do_fim_do_exercicio():
@@ -759,10 +779,9 @@ def test_queda_do_dps_pela_media_de_3_anos():
         2021: D(22),
         2022: D(19),
     }
-    keys = list(dps)
-    assert screen.avg_window_drops(dps, keys, 3, D(0)) == []
+    assert screen.avg_window_drops(dps, list(dps), 3, D(0)) == ([], 4)
     # média cai de verdade: 3 anos fortes e depois 3 fracos
     queda = {2016: D(20), 2017: D(20), 2018: D(20), 2019: D(10), 2020: D(10), 2021: D(10)}
-    assert screen.avg_window_drops(queda, list(queda), 3, D(0)) == [2019, 2020, 2021]
-    # sem anos suficientes: sem comparação
-    assert screen.avg_window_drops({2020: D(1), 2021: D(2)}, [2020, 2021], 3, D(0)) is None
+    assert screen.avg_window_drops(queda, list(queda), 3, D(0)) == ([2019, 2020, 2021], 3)
+    # sem anos suficientes: nenhuma comparação
+    assert screen.avg_window_drops({2020: D(1), 2021: D(2)}, [2020, 2021], 3, D(0)) == ([], 0)
