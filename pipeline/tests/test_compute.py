@@ -785,3 +785,22 @@ def test_dva_zerada_depois_do_fre_fica_indisponivel_e_vai_para_a_lista_manual(co
     # e aparece na lista de revisão
     listed = review.pending(conn)["dividends_to_enter"]
     assert listed == [(400, "(sem cadastro)", [2022, 2023])]
+
+
+def test_prioridade_inclui_empresa_da_lista_em_qualquer_status(conn):
+    World(conn).company(1, "ABCD", dividends=burst)
+    run(conn)
+    # queda do DPS indisponível e nenhum payout pendente por outlier: só entra se estiver na lista
+    conn.execute("UPDATE screen_result SET status = 'insufficient_data' WHERE cvm_code = 1")
+    conn.execute(
+        "UPDATE screen_criterion SET status = 'pass' WHERE cvm_code = 1 AND criterion = 'liquidez'"
+    )
+    conn.execute(
+        "UPDATE screen_criterion SET status = 'unavailable', detail = %s::jsonb"
+        " WHERE cvm_code = 1 AND criterion = 'queda_dividendo_por_acao'",
+        ('{"reason": "data"}',),
+    )
+    conn.commit()
+    assert review.priority(conn) == []
+    watch.add(conn, 1, "carteira", "energia", None)
+    assert [(r[0], r[2]) for r in review.priority(conn)] == [(1, date(2023, 12, 31))]
