@@ -804,3 +804,220 @@ def test_prioridade_inclui_empresa_da_lista_em_qualquer_status(conn):
     assert review.priority(conn) == []
     watch.add(conn, 1, "carteira", "energia", None)
     assert [(r[0], r[2]) for r in review.priority(conn)] == [(1, date(2023, 12, 31))]
+
+
+# --- Fase 3: preço teto -------------------------------------------------------
+
+
+def run_ceilings(conn, as_of=TODAY, **cfg_over):
+    cfg = compute.load_config(conn)
+    cfg.update(cfg_over)
+    return compute.build_ceilings(conn, cfg, as_of)
+
+
+def watched(conn, world_cvm=1):
+    watch.add(conn, world_cvm, "carteira", "energia", None)
+
+
+def methods(conn, cvm=1, as_of=TODAY):
+    return {
+        m: (st, v, reason)
+        for m, st, v, reason in conn.execute(
+            "SELECT method, status, value, reason FROM ceiling_method"
+            " WHERE cvm_code = %s AND as_of = %s",
+            (cvm, as_of),
+        )
+    }
+
+
+def test_preco_teto_ponta_a_ponta_com_numeros_conferidos(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    run(conn)
+    out = run_ceilings(conn)
+    assert out["companies"] == 1 and out["by_status"] == {"ok": 1}
+    m = methods(conn)
+    # 1.000 ações; JCP 20 (líquido 17) + dividendos 30 = 47 por ano -> R$ 0,047 por ação
+    close = lambda a, b: abs(a - b) < D("1e-6")  # noqa: E731 (a coluna guarda 8 casas)
+    assert close(m["bazin"][1], D("0.047") / D("0.06"))
+    assert close(m["gordon"][1], D("0.047") / D("0.12"))  # g = 0 (dividendo total constante)
+    assert close(m["graham"][1], D("1.125").sqrt())  # LPA 0,1 e VPA 0,5
+    assert close(m["multiples"][1], D("8") * D("0.1"))  # P/L = 800 / 100 em todos os anos
+    ceil_ = conn.execute("SELECT ceiling, methods_ok, k_required FROM ceiling_result").fetchone()
+    expected = (D("0.047") / D("0.06") + D("0.8")) / 2  # mediana dos quatro
+    assert ceil_[1:] == (4, 3) and abs(ceil_[0] - expected) < D("1e-6")
+    row = conn.execute(
+        "SELECT ticker, kind, price, price_date, band, votes, buy FROM ceiling_class"
+    ).fetchone()
+    assert row == ("ABCD3", "on", D("0.8"), date(2026, 6, 30), "hold", 1, False)
+    # fonte, data-base e coleta guardadas
+    src = conn.execute(
+        "SELECT source, data_base, collected_at FROM ceiling_method WHERE method = 'bazin'"
+    ).fetchone()
+    assert src[0] and src[1] == date(2025, 12, 31) and src[2] is not None
+
+
+def test_preco_baixo_vira_compra_e_alto_nao(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    run(conn)
+    conn.execute("UPDATE quote_daily SET close = 0.5 WHERE trade_date = %s", (TODAY,))
+    conn.commit()
+    run_ceilings(conn)
+    row = conn.execute("SELECT band, votes, buy FROM ceiling_class").fetchone()
+    assert row == ("strong_buy", 3, True)  # 0,5 só não fica abaixo do Gordon (0,39)
+    conn.execute("UPDATE quote_daily SET close = 2 WHERE trade_date = %s", (TODAY,))
+    conn.commit()
+    run_ceilings(conn)
+    assert conn.execute("SELECT band, votes, buy FROM ceiling_class").fetchone() == (
+        "expensive",
+        0,
+        False,
+    )
+
+
+def test_so_a_lista_acompanhada_e_rodar_de_novo_substitui(conn):
+    w = World(conn)
+    w.company(1, "ABCD")
+    w.company(2, "EFGH")
+    watched(conn)
+    run(conn)
+    run_ceilings(conn)
+    run_ceilings(conn)
+    assert conn.execute("SELECT DISTINCT cvm_code FROM ceiling_result").fetchall() == [(1,)]
+    assert conn.execute("SELECT count(*) FROM ceiling_method").fetchone() == (4,)
+    assert run_ceilings(conn)["companies"] == 1
+
+
+def test_lista_vazia_nao_calcula(conn):
+    World(conn).company(1, "ABCD")
+    assert "vazia" in run_ceilings(conn)["warning"]
+
+
+def test_ponto_no_tempo_so_usa_o_que_ja_estava_entregue(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    run(conn)
+    run_ceilings(conn, date(2025, 12, 31))  # a DFP 2025 só foi entregue em 15/03/2026
+    assert conn.execute(
+        "SELECT data_base FROM ceiling_result WHERE as_of = %s", (date(2025, 12, 31),)
+    ).fetchone() == (date(2024, 12, 31),)
+
+
+def test_fechamento_velho_nao_vale_como_preco_atual(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    run(conn)
+    run_ceilings(conn, TODAY + timedelta(days=30))
+    assert conn.execute("SELECT count(*) FROM ceiling_class").fetchone() == (0,)
+    assert conn.execute("SELECT count(*) FROM ceiling_result").fetchone() == (1,)
+
+
+def test_banco_tem_tres_metodos_pvp_e_k_dois(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    conn.execute("UPDATE indicator_annual SET plan = 'banco'")
+    conn.commit()
+    run(conn)
+    run_ceilings(conn)
+    m = methods(conn)
+    assert m["graham"][0] == "excluded" and m["graham"][2] == "banco ou seguradora"
+    # P/VP = 800 / 500 = 1,6 em todos os anos; VPA = 500 / 1000 = 0,5
+    assert abs(m["multiples"][1] - D("1.6") * D("0.5")) < D("1e-6")
+    assert conn.execute(
+        "SELECT status, methods_ok, k_required, plan FROM ceiling_result"
+    ).fetchone() == ("ok", 3, 2, "banco")
+
+
+def test_dado_ausente_deixa_o_metodo_indisponivel_e_pode_dar_dados_insuficientes(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    conn.execute("UPDATE indicator_annual SET plan = 'banco'")
+    conn.execute("UPDATE indicator_annual SET jcp = NULL WHERE reference_date = '2024-12-31'")
+    conn.commit()
+    run(conn)
+    run_ceilings(conn)
+    m = methods(conn)
+    assert m["bazin"][0] == "unavailable" and m["bazin"][1] is None
+    assert m["gordon"][0] == "unavailable"
+    res = conn.execute(
+        "SELECT status, methods_ok, k_required, ceiling FROM ceiling_result"
+    ).fetchone()
+    assert res[:3] == ("insufficient", 1, None)  # só o P/VP
+    assert conn.execute("SELECT buy FROM ceiling_class").fetchone() == (False,)
+
+
+def add_unit(conn, composition, price=2, ticker="ABCD11"):
+    fca = conn.execute("SELECT id FROM filing WHERE doc_type = 'FCA' AND cvm_code = 1").fetchone()[
+        0
+    ]
+    conn.execute(
+        "INSERT INTO company_security (cvm_code, ticker, security_type, unit_composition,"
+        " filing_id) VALUES (1, %s, 'Units', %s, %s)",
+        (ticker, composition, fca),
+    )
+    sec = conn.execute(
+        "INSERT INTO security (ticker, isin, especi, short_name, first_date, last_date)"
+        " VALUES (%s, 'BRABCDUNT0', 'UNT N2', 'ABCD', '2010-01-04', '2026-06-30') RETURNING id",
+        (ticker,),
+    ).fetchone()[0]
+    sf = conn.execute("SELECT id FROM source_file").fetchone()[0]
+    conn.execute(
+        "INSERT INTO quote_daily VALUES (%s, %s, %s, %s, %s, %s, %s, 1, 1, 1, 0, %s)",
+        (sec, TODAY, price, price, price, price, price, sf),
+    )
+    conn.commit()
+
+
+def test_unit_vale_a_composicao_do_fca(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    add_unit(conn, "1 ON / 2 PN", price=2)
+    run(conn)
+    run_ceilings(conn)
+    on, unit = (
+        conn.execute(
+            "SELECT ticker, kind, multiplier, ceiling, price, buy FROM ceiling_class"
+            " WHERE ticker = %s",
+            (t,),
+        ).fetchone()
+        for t in ("ABCD3", "ABCD11")
+    )
+    assert (unit[1], unit[2]) == ("unit", 3) and abs(unit[3] - on[3] * 3) < D("1e-6")
+    assert unit[4] == D("2")
+
+
+def test_unit_sem_composicao_legivel_fica_sem_teto_com_motivo(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    add_unit(conn, None)
+    run(conn)
+    run_ceilings(conn)
+    row = conn.execute(
+        "SELECT kind, multiplier, ceiling, buy, reason FROM ceiling_class WHERE ticker = 'ABCD11'"
+    ).fetchone()
+    assert row[:4] == ("unit", None, None, False) and "composição" in row[4]
+
+
+def test_comando_ceilings_list_mostra_o_resultado(conn, monkeypatch, capsys):
+    from acoesb3 import cli
+
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    run(conn)
+    monkeypatch.setattr(cli, "connect", lambda: _NoClose(conn))
+    cli.main(["compute", "--step", "ceilings", "--as-of", "2026-06-30"])
+    cli.main(["ceilings", "list"])
+    out = capsys.readouterr().out
+    assert "ABCD3" in out and "bazin" in out and "Preço teto em 2026-06-30" in out
+
+
+class _NoClose:
+    def __init__(self, conn):
+        self._c = conn
+
+    def __enter__(self):
+        return self._c
+
+    def __exit__(self, *a):
+        return False

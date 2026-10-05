@@ -130,11 +130,12 @@ def cmd_daily(conn, a) -> None:
         cmd_size(conn, a)
 
 
-COMPUTE_STEPS = ("annual", "outliers", "events", "screens")
+COMPUTE_STEPS = ("annual", "outliers", "events", "screens", "ceilings")
 
 
 def cmd_compute(conn, a) -> None:
-    """Fase 2: fatos anuais -> outliers -> eventos societários -> retratos do filtro.
+    """Fases 2 e 3: fatos anuais -> outliers -> eventos societários -> retratos do filtro ->
+    preço teto da lista acompanhada.
 
     As etapas dependem umas das outras; se uma falha, as seguintes não rodam.
     """
@@ -148,6 +149,7 @@ def cmd_compute(conn, a) -> None:
             **compute.build_company_events(conn, cfg),
         },
         "screens": lambda: compute.build_screens(conn, cfg),
+        "ceilings": lambda: compute.build_ceilings(conn, cfg, a.as_of),
     }
     for step in COMPUTE_STEPS:
         if step in steps:
@@ -240,6 +242,41 @@ def cmd_watch(conn, a) -> None:
                 )
 
 
+BANDS_PT = {
+    "strong_buy": "compra forte",
+    "buy": "compra",
+    "hold": "manter",
+    "expensive": "cara, avaliar venda",
+}
+
+
+def cmd_ceilings(conn, a) -> None:
+    rep = watch.ceilings(conn, a.cvm)
+    if rep["as_of"] is None:
+        print("Nenhum preço teto calculado: rode `acoesb3 compute --step ceilings`.")
+        return
+    print(f"Preço teto em {rep['as_of']} (valores por ação, na base de ações dessa data)")
+    for c in rep["companies"]:
+        ceil_ = "indisponível" if c["ceiling"] is None else f"{c['ceiling']:.2f}"
+        k = "-" if c["k"] is None else c["k"]
+        print(
+            f"== {c['cvm']} {c['name']} [{c['plan']}] teto={ceil_} métodos={c['methods_ok']} K={k}"
+            f" ({'dados insuficientes' if c['status'] == 'insufficient' else 'ok'})"
+            f" exercício={c['data_base']}"
+        )
+        for method, st, value, reason in c["methods"]:
+            shown = f"{value:.2f}" if value is not None else f"{st}: {reason}"
+            print(f"     {method:10} {shown}")
+        for tk, kind, price, pdate, ceil_, ratio, band, votes, kreq, buy, why in c["classes"]:
+            if ceil_ is None:
+                print(f"   {tk:8} {kind:4} preço={price:.2f} ({pdate}) sem teto: {why}")
+                continue
+            print(
+                f"   {tk:8} {kind:4} preço={price:.2f} ({pdate}) teto={ceil_:.2f}"
+                f" {ratio:.0%} {BANDS_PT[band]} votos={votes}/{kreq} {'COMPRA' if buy else ''}"
+            )
+
+
 def cmd_sql(conn, a) -> None:
     """Consulta de leitura (diagnóstico): cada consulta roda numa transação somente leitura."""
     for query in a.query:
@@ -277,6 +314,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("size")
     cp = sub.add_parser("compute", help="indicadores, outliers, eventos e filtro (fase 2)")
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
+    cp.add_argument(
+        "--as-of", type=date.fromisoformat, help="data-base do preço teto (padrão: hoje)"
+    )
+    ce = sub.add_parser("ceilings", help="preço teto da lista acompanhada (fase 3)")
+    cs = ce.add_subparsers(dest="ceilings_cmd", required=True)
+    x = cs.add_parser("list", help="último preço teto calculado, com métodos e papéis")
+    x.add_argument("--cvm", type=int, action="append", help="só estas empresas")
     sq = sub.add_parser("sql", help="consulta somente leitura, para diagnóstico")
     sq.add_argument("--query", action="append", required=True)
     sq.add_argument("--limit", type=int, default=200)
@@ -359,6 +403,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_review(conn, a)
         elif a.cmd == "watch":
             cmd_watch(conn, a)
+        elif a.cmd == "ceilings":
+            cmd_ceilings(conn, a)
         elif a.cmd == "sql":
             cmd_sql(conn, a)
     return 0

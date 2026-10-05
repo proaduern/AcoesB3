@@ -130,3 +130,47 @@ def explain(conn: psycopg.Connection, cvm_code: int) -> dict:
         (cvm_code,),
     ).fetchall()
     return {"as_of": as_of, "criteria": criteria, "annual": annual, "events": events}
+
+
+def ceilings(conn: psycopg.Connection, cvm_codes: list[int] | None = None) -> dict:
+    """Último preço teto da lista (ou das empresas pedidas): consolidação, métodos e papéis."""
+    as_of = conn.execute("SELECT max(as_of) FROM ceiling_result").fetchone()[0]
+    if as_of is None:
+        return {"as_of": None, "companies": []}
+    filt = "AND r.cvm_code = ANY(%s)" if cvm_codes else ""
+    args = (as_of, cvm_codes) if cvm_codes else (as_of,)
+    out = []
+    for cvm, name, status, n_ok, k, ceil_, plan, data_base in conn.execute(
+        f"""
+        SELECT r.cvm_code, c.name, r.status, r.methods_ok, r.k_required, r.ceiling, r.plan,
+               r.data_base
+        FROM ceiling_result r JOIN company c USING (cvm_code)
+        WHERE r.as_of = %s {filt} ORDER BY c.name
+        """,
+        args,
+    ).fetchall():
+        methods = conn.execute(
+            "SELECT method, status, value, reason FROM ceiling_method"
+            " WHERE as_of = %s AND cvm_code = %s ORDER BY method",
+            (as_of, cvm),
+        ).fetchall()
+        classes = conn.execute(
+            "SELECT ticker, kind, price, price_date, ceiling, ratio, band, votes, k_required, buy,"
+            " reason FROM ceiling_class WHERE as_of = %s AND cvm_code = %s ORDER BY ticker",
+            (as_of, cvm),
+        ).fetchall()
+        out.append(
+            {
+                "cvm": cvm,
+                "name": name,
+                "status": status,
+                "methods_ok": n_ok,
+                "k": k,
+                "ceiling": ceil_,
+                "plan": plan,
+                "data_base": data_base,
+                "methods": methods,
+                "classes": classes,
+            }
+        )
+    return {"as_of": as_of, "companies": out}

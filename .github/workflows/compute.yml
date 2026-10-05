@@ -1,5 +1,5 @@
 name: compute
-# Fase 2: fatos anuais, outliers, eventos societários e retratos do filtro.
+# Fases 2 e 3: fatos anuais, outliers, eventos societários, retratos do filtro e preço teto da lista acompanhada.
 # Primeira execução depois da migração 0004: marque reload_dfp para regravar as contas de
 # DVA de bancos e seguradoras (as contas novas só valem para documentos recarregados).
 on:
@@ -41,8 +41,15 @@ on:
         type: boolean
         default: false
       step:
-        description: "Etapa (vazio = todas): annual, outliers, events ou screens"
+        description: "Etapa (vazio = todas): annual, outliers, events, screens ou ceilings"
         required: false
+      as_of:
+        description: "Data-base do preço teto, AAAA-MM-DD (vazio = hoje)"
+        required: false
+      ceilings_list:
+        description: "Imprimir o último preço teto da lista acompanhada (métodos, papéis, faixas)"
+        type: boolean
+        default: false
 concurrency:
   group: neon-writer
   cancel-in-progress: false
@@ -57,6 +64,7 @@ jobs:
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       RELOAD_DFP: ${{ inputs.reload_dfp }}
       STEP: ${{ inputs.step }}
+      AS_OF: ${{ inputs.as_of }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,6 +94,7 @@ jobs:
         run: |
           args=()
           [ -n "$STEP" ] && args+=(--step "$STEP")
+          [ -n "$AS_OF" ] && args+=(--as-of "$AS_OF")
           acoesb3 compute "${args[@]}"
       - name: Pendências de revisão
         env:
@@ -127,6 +136,9 @@ jobs:
           if [ "$WATCH_CANDIDATES" = "true" ]; then
             acoesb3 watch candidates --per-segment 6
           fi
+      - name: Preço teto (leitura)
+        if: ${{ inputs.ceilings_list }}
+        run: acoesb3 ceilings list
       - name: Consultas de diagnóstico
         if: ${{ inputs.sql != '' }}
         env:
