@@ -1,11 +1,9 @@
 name: probe-dfc
 # Temporário (fase 3): imprime as contas do DFC das empresas da lista para escolher o FCFE.
 on:
-  workflow_dispatch:
-    inputs:
-      years:
-        description: "Anos separados por espaço"
-        default: "2024"
+  push:
+    branches: [claude/vibrant-bardeen-oy408v]
+    paths: [scripts/probe_dfc.py, .github/workflows/probe-dfc.yml]
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -15,4 +13,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests
-      - run: python scripts/probe_dfc.py ${{ inputs.years }}
+      - run: python scripts/probe_dfc.py 2024 2021
