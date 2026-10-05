@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
+from .fcfe import Fcfe
 from .screen import YearData
 
 D = Decimal
@@ -47,6 +48,14 @@ class CeilingParams:
     band_hold: Decimal
     price_max_age_days: int
     financial_plans: tuple[str, ...]
+    dcf_enabled: bool
+    dcf_rate: Decimal
+    dcf_years: int
+    dcf_terminal_growth: Decimal
+    dcf_history_years: int
+    dcf_base_years: int
+    dcf_g_min: Decimal
+    dcf_g_max: Decimal
 
     @classmethod
     def from_config(cls, cfg: dict) -> CeilingParams:
@@ -74,6 +83,14 @@ class CeilingParams:
             band_hold=num("ceiling.band_hold"),
             price_max_age_days=int(cfg["ceiling.price_max_age_days"]),
             financial_plans=tuple(cfg["ceiling.financial_plans"]),
+            dcf_enabled=bool(cfg["ceiling.dcf_enabled"]),
+            dcf_rate=num("ceiling.dcf_rate"),
+            dcf_years=int(cfg["ceiling.dcf_years"]),
+            dcf_terminal_growth=num("ceiling.dcf_terminal_growth"),
+            dcf_history_years=int(cfg["ceiling.dcf_history_years"]),
+            dcf_base_years=int(cfg["ceiling.dcf_base_years"]),
+            dcf_g_min=num("ceiling.dcf_g_min"),
+            dcf_g_max=num("ceiling.dcf_g_max"),
         )
 
 
@@ -348,21 +365,97 @@ def multiples(
     return MethodResult("multiples", "ok", med * base, None, inputs)
 
 
+def dcf(
+    years: dict[int, YearData],
+    last: int,
+    plan: str | None,
+    fcfe: dict[int, Fcfe],
+    growth_override: Decimal | None,
+    p: CeilingParams,
+) -> MethodResult:
+    """DCF do fluxo de caixa livre para o acionista (FCFE), descontado ao retorno exigido.
+
+    Base = média do FCFE dos ``dcf_base_years`` últimos exercícios (suaviza investimentos em
+    degraus). Crescimento = o informado para a empresa (``dcf_override``) ou o composto do FCFE
+    entre as pontas dos ``dcf_history_years`` exercícios, limitado a [g_min, g_max]; ponta ausente
+    ou não positiva e sem valor informado = indisponível. Projeta ``dcf_years`` anos e soma a
+    perpetuidade (crescimento ``dcf_terminal_growth``). O valor total das ações é dividido pelas
+    ações do último exercício na base de ações da data-base. Fora: bancos e seguradoras."""
+    if plan is None:
+        return _unavailable("dcf", "plano de contas não identificado")
+    if is_financial(plan, p):
+        return _excluded("dcf", "banco ou seguradora", plan=plan)
+    keys, missing = _window(years, last, p.dcf_history_years)
+    series, bad = {}, {}
+    for k in keys:
+        f = fcfe.get(k)
+        if f is None or f.value is None:
+            bad[k] = "sem DFC" if f is None else f.reason
+        else:
+            series[k] = f.value
+    detail = {k: f.detail() for k, f in fcfe.items() if k in keys}
+    inputs = {"fcfe": _s(series), "fcfe_detail": detail}
+    if missing or bad:
+        return _unavailable(
+            "dcf", "FCFE indisponível em algum exercício", **inputs, missing_years=missing, why=bad
+        )
+    base_keys = keys[-p.dcf_base_years :]
+    base = sum(series[k] for k in base_keys) / len(base_keys)
+    inputs |= {"base": str(base), "base_years": list(base_keys)}
+    if base <= 0:
+        return _unavailable("dcf", "FCFE médio não positivo", **inputs)
+    if growth_override is not None:
+        g = growth_override
+        inputs["growth_source"] = "informado para a empresa"
+    else:
+        first, end = series[keys[0]], series[last]
+        if first <= 0 or end <= 0:
+            return _unavailable(
+                "dcf",
+                "crescimento histórico indisponível: informe o crescimento da empresa",
+                **inputs,
+            )
+        g_raw = (end / first) ** (D(1) / D(len(keys) - 1)) - 1
+        g = min(max(g_raw, p.dcf_g_min), p.dcf_g_max)
+        inputs |= {"growth_source": "histórico do FCFE", "g_raw": str(g_raw)}
+    k_, gt = p.dcf_rate, p.dcf_terminal_growth
+    inputs |= {"g": str(g), "k": str(k_), "terminal_growth": str(gt), "years": p.dcf_years}
+    if k_ <= gt:
+        return _excluded("dcf", "taxa de desconto não supera a perpetuidade", **inputs)
+    flow, pv = base, D(0)
+    for i in range(1, p.dcf_years + 1):
+        flow *= 1 + g
+        pv += flow / (1 + k_) ** i
+    terminal = flow * (1 + gt) / (k_ - gt) / (1 + k_) ** p.dcf_years
+    total = pv + terminal
+    per_share = _per_share(total, years[last])
+    inputs |= {"pv_projection": str(pv), "pv_terminal": str(terminal), "equity_value": str(total)}
+    if per_share is None:
+        return _unavailable("dcf", "faltam ações do último exercício", **inputs)
+    return MethodResult("dcf", "ok", per_share, None, inputs)
+
+
 def evaluate_methods(
-    years: dict[int, YearData], plan: str | None, p: CeilingParams
+    years: dict[int, YearData],
+    plan: str | None,
+    p: CeilingParams,
+    fcfe: dict[int, Fcfe] | None = None,
+    dcf_growth: Decimal | None = None,
 ) -> list[MethodResult]:
-    """Bazin, Graham, Gordon e múltiplos para uma empresa (o DCF entra à parte)."""
+    """Os métodos de uma empresa: Bazin, Graham, Gordon, múltiplos e (se habilitado) o DCF."""
+    names = ["bazin", "graham", "gordon", "multiples"] + (["dcf"] if p.dcf_enabled else [])
     if not years:
-        return [
-            _unavailable(m, "sem demonstrações") for m in ("bazin", "graham", "gordon", "multiples")
-        ]
+        return [_unavailable(m, "sem demonstrações") for m in names]
     last = max(years)
-    return [
+    out = [
         bazin(years, last, p),
         graham(years, last, plan, p),
         gordon(years, last, p),
         multiples(years, last, plan, p),
     ]
+    if p.dcf_enabled:
+        out.append(dcf(years, last, plan, fcfe or {}, dcf_growth, p))
+    return out
 
 
 # --- Consolidação, votação e faixas -----------------------------------------

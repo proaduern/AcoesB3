@@ -150,7 +150,7 @@ def ceilings(conn: psycopg.Connection, cvm_codes: list[int] | None = None) -> di
         args,
     ).fetchall():
         methods = conn.execute(
-            "SELECT method, status, value, reason FROM ceiling_method"
+            "SELECT method, status, value, reason, inputs FROM ceiling_method"
             " WHERE as_of = %s AND cvm_code = %s ORDER BY method",
             (as_of, cvm),
         ).fetchall()

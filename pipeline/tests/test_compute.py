@@ -885,8 +885,107 @@ def test_so_a_lista_acompanhada_e_rodar_de_novo_substitui(conn):
     run_ceilings(conn)
     run_ceilings(conn)
     assert conn.execute("SELECT DISTINCT cvm_code FROM ceiling_result").fetchall() == [(1,)]
-    assert conn.execute("SELECT count(*) FROM ceiling_method").fetchone() == (4,)
+    assert conn.execute("SELECT count(*) FROM ceiling_method").fetchone() == (5,)
     assert run_ceilings(conn)["companies"] == 1
+
+
+def add_dfc(conn, cvm=1, cfo=1000, capex=-300, borrowed=100):
+    """DFC consolidado (método indireto) de cada DFP da empresa, em R$ (já escalado)."""
+    lines = [
+        ("6.01", "Caixa Líquido Atividades Operacionais", cfo),
+        ("6.02", "Caixa Líquido Atividades de Investimento", capex),
+        ("6.02.01", "Aquisição de Imobilizado", capex),
+        ("6.03", "Caixa Líquido Atividades de Financiamento", borrowed - 400),
+        ("6.03.01", "Captação de empréstimos", borrowed),
+        ("6.03.02", "Dividendos pagos", -400),
+    ]
+    for fid, ref in conn.execute(
+        "SELECT id, reference_date FROM filing WHERE doc_type = 'DFP' AND cvm_code = %s", (cvm,)
+    ).fetchall():
+        for code, desc, value in lines:
+            conn.execute(
+                "INSERT INTO financial_line (filing_id, statement, consolidated, account_code,"
+                " period_end, value, source_scale, description)"
+                " VALUES (%s, 'DFC_MI', true, %s, %s, %s, 'MIL', %s)",
+                (fid, code, ref, value, desc),
+            )
+    conn.commit()
+
+
+def test_dcf_ponta_a_ponta_entra_como_quinto_metodo(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    add_dfc(conn)  # FCFE = 1.000 - 300 + 100 = 800 por ano (dividendos pagos ficam fora)
+    run(conn)
+    run_ceilings(conn)
+    st, value, _ = methods(conn)["dcf"]
+    # fluxo constante de 800: 800 x 10,9813253 / 1.000 ações
+    assert st == "ok" and abs(value - D("800") * D("10.981325326") / 1000) < D("1e-6")
+    res = conn.execute("SELECT status, methods_ok, k_required, ceiling FROM ceiling_result")
+    status_, n, k, ceil_ = res.fetchone()
+    assert (status_, n, k) == ("ok", 5, 3) and abs(ceil_ - D("0.8")) < D("1e-6")  # mediana
+    inputs = conn.execute("SELECT inputs FROM ceiling_method WHERE method = 'dcf'").fetchone()[0]
+    detail = inputs["fcfe_detail"]["2025"]
+    assert detail["fcfe"] == "800.000000" and detail["debt"] == "100.000000"
+    assert [x[1] for x in detail["lines"]["excluded"]] == ["Dividendos pagos"]
+
+
+def test_dcf_sem_dfc_detalhado_fica_indisponivel_e_nao_conta(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    run(conn)
+    run_ceilings(conn)
+    assert methods(conn)["dcf"][0] == "unavailable"
+    assert conn.execute("SELECT methods_ok, k_required FROM ceiling_result").fetchone() == (4, 3)
+
+
+def test_dcf_crescimento_informado_vale_e_pode_ser_removido(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    add_dfc(conn)
+    run(conn)
+    run_ceilings(conn)
+    base = methods(conn)["dcf"][1]
+    review.set_dcf_growth(conn, 1, D("0.08"), "expansão contratada")
+    run_ceilings(conn)
+    assert methods(conn)["dcf"][1] > base
+    inputs = conn.execute("SELECT inputs FROM ceiling_method WHERE method = 'dcf'").fetchone()[0]
+    assert inputs["growth_source"] == "informado para a empresa" and inputs["g"] == "0.080000"
+    review.set_dcf_growth(conn, 1, None, None)
+    run_ceilings(conn)
+    assert abs(methods(conn)["dcf"][1] - base) < D("1e-6")
+
+
+def test_dcf_banco_fica_excluido(conn):
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    add_dfc(conn)
+    conn.execute("UPDATE indicator_annual SET plan = 'seguradora'")
+    conn.commit()
+    run(conn)
+    run_ceilings(conn)
+    assert methods(conn)["dcf"][0] == "excluded"
+    assert conn.execute("SELECT methods_ok, k_required FROM ceiling_result").fetchone() == (3, 2)
+
+
+def test_comando_mostra_o_fcfe_por_conta(conn, monkeypatch, capsys):
+    from acoesb3 import cli
+
+    World(conn).company(1, "ABCD")
+    watched(conn)
+    add_dfc(conn)
+    run(conn)
+    run_ceilings(conn)
+    monkeypatch.setattr(cli, "connect", lambda: _NoClose(conn))
+    cli.main(["ceilings", "list", "--dcf"])
+    out = capsys.readouterr().out
+    assert "FCFE=800" in out and "Aquisição de Imobilizado" in out and "Dividendos pagos" in out
+    cli.main(["review", "dcf-growth", "--cvm", "1", "--growth", "0.03"])
+    assert conn.execute("SELECT growth FROM dcf_growth_override").fetchone() == (D("0.03"),)
+    cli.main(["review", "dcf-growth", "--cvm", "1", "--clear"])
+    assert conn.execute("SELECT count(*) FROM dcf_growth_override").fetchone() == (0,)
+    with pytest.raises(SystemExit):
+        cli.main(["review", "dcf-growth", "--cvm", "1"])
 
 
 def test_lista_vazia_nao_calcula(conn):

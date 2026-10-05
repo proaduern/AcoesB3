@@ -256,10 +256,19 @@ def _filing_ids(conn, doc_type: str, year_rows) -> dict:
     return ids
 
 
+def _dfc_companies(conn) -> set[int] | None:
+    """Empresas cujas contas filhas do DFC (6.02.*, 6.03.*) são guardadas: a lista acompanhada, se
+    ``cvm.dfc_only_watchlist``; None = todas. O total operacional (6.01) vale para todas."""
+    if not get_config(conn, "cvm.dfc_only_watchlist"):
+        return None
+    return {r[0] for r in conn.execute("SELECT cvm_code FROM watchlist")}
+
+
 def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) -> dict:
     rules = _account_rules(conn)
     per_share = get_config(conn, "cvm.per_share_prefixes")
     prefix = f"{doc_type.lower()}_cia_aberta_"
+    dfc_keep = _dfc_companies(conn)
     lines: list[cvm.Line] = []
     for statement in cvm.STATEMENTS:
         for scope, consolidated in (("con", True), ("ind", False)):
@@ -267,6 +276,8 @@ def _load_statements(conn, doc_type: str, year: int, members: cvm.ZipMembers) ->
             if name not in members:
                 raise ValueError(f"arquivo esperado ausente no zip: {name}")
             parsed = cvm.parse_statement(members[name], statement, consolidated, rules, per_share)
+            if statement.startswith("DFC") and dfc_keep is not None:
+                parsed = (x for x in parsed if x.account_code == "6.01" or x.cvm_code in dfc_keep)
             lines.extend(parsed)
     lines, identical_dups, conflicts = cvm.dedupe(lines)
     if conflicts:

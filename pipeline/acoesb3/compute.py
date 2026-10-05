@@ -13,7 +13,7 @@ from decimal import Decimal
 import psycopg
 from psycopg.types.json import Jsonb
 
-from . import ceiling, corporate, indicators, mapping, screen
+from . import ceiling, corporate, fcfe, indicators, mapping, screen
 from . import shares as shares_mod
 
 log = logging.getLogger(__name__)
@@ -789,7 +789,23 @@ CEILING_SOURCES = {
     "graham": "CVM DFP (lucro, PL) + FRE (ações e eventos)",
     "gordon": "CVM DFP (proventos) + FRE (ações e eventos)",
     "multiples": "CVM DFP (lucro, PL) + FRE (ações) + B3 COTAHIST (fechamento de fim de exercício)",
+    "dcf": "CVM DFP (DFC: caixa operacional, investimento e financiamento) + FRE (ações)",
 }
+
+
+def _load_fcfe(conn, filing_ids: list[int], rules: fcfe.FcfeRules) -> dict[int, fcfe.Fcfe]:
+    """filing_id -> FCFE do exercício, a partir das contas do DFC (6.01, 6.02.xx, 6.03.xx)."""
+    lines: dict[int, list] = defaultdict(list)
+    for fid, code, desc, value in conn.execute(
+        """
+        SELECT filing_id, account_code, description, value FROM financial_line
+        WHERE filing_id = ANY(%s) AND statement IN ('DFC_MI', 'DFC_MD')
+          AND account_code ~ '^6\\.0[123](\\.[0-9]{2})?$'
+        """,
+        (filing_ids,),
+    ):
+        lines[fid].append((code, desc or "", value))
+    return {fid: fcfe.compute_fcfe(ls, rules) for fid, ls in lines.items()}
 
 
 def _latest_prices(conn, sids: list[int], as_of: date, max_age: int) -> dict[int, tuple]:
@@ -841,6 +857,8 @@ def build_ceilings(conn: psycopg.Connection, cfg: dict, as_of: date | None = Non
     sids = [sid for c in watch for sid, _t, _v in ctx.by_company.get(c, [])]
     prices = _latest_prices(conn, sids, as_of, p.price_max_age_days)
     compositions = _unit_compositions(conn, as_of)
+    rules = fcfe.FcfeRules.from_config(cfg)
+    growth = dict(conn.execute("SELECT cvm_code, growth FROM dcf_growth_override"))
 
     method_rows, result_rows, class_rows = [], [], []
     summary: dict[str, dict] = {}
@@ -848,7 +866,9 @@ def build_ceilings(conn: psycopg.Connection, cfg: dict, as_of: date | None = Non
         years, plans = _years_at(ctx, cvm, as_of)
         last = max(years) if years else None
         plan = plans.get(last) if last else None
-        methods = ceiling.evaluate_methods(years, plan, p)
+        by_filing = _load_fcfe(conn, [y.filing_id for y in years.values()], rules) if years else {}
+        by_year = {y: by_filing[v.filing_id] for y, v in years.items() if v.filing_id in by_filing}
+        methods = ceiling.evaluate_methods(years, plan, p, by_year, growth.get(cvm))
         cons = ceiling.consolidate(methods, p)
         data_base = years[last].reference_date if last else None
         collected = max((y.collected_at for y in years.values() if y.collected_at), default=None)

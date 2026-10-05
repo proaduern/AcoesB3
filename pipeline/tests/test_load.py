@@ -266,3 +266,29 @@ def test_backtest_usa_data_da_versao_guardada(conn, served):
     assert version == 3
     assert available_from == v3  # data da versão guardada, não a da 1ª entrega
     assert first == date(2025, 4, 9) and available_from > first
+
+
+def test_contas_filhas_do_dfc_so_da_lista_acompanhada(conn, served):
+    served[load.cvm.doc_url("DFP", 2024)] = make_zip("dfp_cia_aberta_", 2024)
+    load.load_doc_year(conn, "DFP", 2024)
+    codes = lambda: {  # noqa: E731
+        r[0]
+        for r in conn.execute(
+            "SELECT account_code FROM financial_line WHERE statement = 'DFC_MI' AND"
+            " filing_id IN (SELECT id FROM filing WHERE cvm_code = 23159)"
+        )
+    }
+    assert codes() == {"6.01"}  # BB Seguridade ainda fora da lista: só o total operacional
+    conn.execute(
+        "INSERT INTO company (cvm_code, cnpj, name, status, source)"
+        " VALUES (23159, '1', 'BB Seguridade', 'ATIVO', 'cvm_cad') ON CONFLICT DO NOTHING"
+    )
+    conn.execute("INSERT INTO watchlist (cvm_code, role, segment) VALUES (23159, 'carteira', 'x')")
+    conn.commit()
+    load.load_doc_year(conn, "DFP", 2024, force=True)
+    assert {"6.01", "6.02.01", "6.03.01"} <= codes()
+    conn.execute("UPDATE app_config SET value = 'false' WHERE key = 'cvm.dfc_only_watchlist'")
+    conn.execute("DELETE FROM watchlist")
+    conn.commit()
+    load.load_doc_year(conn, "DFP", 2024, force=True)
+    assert "6.02.01" in codes()  # sem a restrição, todas as empresas guardam o detalhe

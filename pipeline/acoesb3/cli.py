@@ -200,6 +200,10 @@ def cmd_review(conn, a) -> None:
         review.set_class(conn, a.cvm, a.sector, a.plan, a.note)
     elif r == "ticker":
         review.set_ticker_root(conn, a.root, a.cvm, a.note)
+    elif r == "dcf-growth":
+        if a.growth is None and not a.clear:
+            raise SystemExit("informe --growth ou --clear")
+        review.set_dcf_growth(conn, a.cvm, None if a.clear else Decimal(a.growth), a.note)
 
 
 def cmd_watch(conn, a) -> None:
@@ -250,6 +254,23 @@ BANDS_PT = {
 }
 
 
+def _print_fcfe(inputs: dict) -> None:
+    """Por exercício: o FCFE e as contas do DFC em cada grupo (para conferir a classificação)."""
+    for year, d in sorted((inputs.get("fcfe_detail") or {}).items()):
+        print(
+            f"       {year}: FCFE={d['fcfe']} = operacional {d['cfo']} + capex {d['capex']}"
+            f" + dividendos recebidos {d['inflow']} + dívida {d['debt']}"
+            + (f" [{d['reason']}]" if d.get("reason") else "")
+        )
+        for kind in ("capex", "inflow", "debt", "excluded"):
+            for code, desc, value in d["lines"].get(kind, []):
+                if Decimal(value) != 0:
+                    print(f"           {kind:8} {code:8} {desc[:70]:70} {Decimal(value):>18,.0f}")
+    for key in ("base", "g_raw", "g", "growth_source", "equity_value"):
+        if key in inputs:
+            print(f"       {key} = {inputs[key]}")
+
+
 def cmd_ceilings(conn, a) -> None:
     rep = watch.ceilings(conn, a.cvm)
     if rep["as_of"] is None:
@@ -264,9 +285,11 @@ def cmd_ceilings(conn, a) -> None:
             f" ({'dados insuficientes' if c['status'] == 'insufficient' else 'ok'})"
             f" exercício={c['data_base']}"
         )
-        for method, st, value, reason in c["methods"]:
+        for method, st, value, reason, inputs in c["methods"]:
             shown = f"{value:.2f}" if value is not None else f"{st}: {reason}"
             print(f"     {method:10} {shown}")
+            if method == "dcf" and a.dcf:
+                _print_fcfe(inputs)
         for tk, kind, price, pdate, ceil_, ratio, band, votes, kreq, buy, why in c["classes"]:
             if ceil_ is None:
                 print(f"   {tk:8} {kind:4} preço={price:.2f} ({pdate}) sem teto: {why}")
@@ -321,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     cs = ce.add_subparsers(dest="ceilings_cmd", required=True)
     x = cs.add_parser("list", help="último preço teto calculado, com métodos e papéis")
     x.add_argument("--cvm", type=int, action="append", help="só estas empresas")
+    x.add_argument("--dcf", action="store_true", help="detalha o FCFE por exercício e por conta")
     sq = sub.add_parser("sql", help="consulta somente leitura, para diagnóstico")
     sq.add_argument("--query", action="append", required=True)
     sq.add_argument("--limit", type=int, default=200)
@@ -376,6 +400,11 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--cvm", type=int, required=True)
     x.add_argument("--sector")
     x.add_argument("--plan", choices=["comum", "banco", "seguradora"])
+    x.add_argument("--note")
+    x = rs.add_parser("dcf-growth", help="crescimento anual do FCFE da empresa no DCF")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--growth", help="fração ao ano (0.03 = 3%%)")
+    x.add_argument("--clear", action="store_true", help="volta ao crescimento histórico")
     x.add_argument("--note")
     x = rs.add_parser("ticker")
     x.add_argument("--root", required=True)

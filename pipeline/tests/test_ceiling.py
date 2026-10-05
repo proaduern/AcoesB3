@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from acoesb3 import ceiling
+from acoesb3.fcfe import Fcfe
 from acoesb3.screen import YearData
 
 D = Decimal
@@ -28,6 +29,14 @@ CFG = {
     "ceiling.band_hold": "1.2",
     "ceiling.price_max_age_days": 10,
     "ceiling.financial_plans": ["banco", "seguradora"],
+    "ceiling.dcf_enabled": True,
+    "ceiling.dcf_rate": "0.12",
+    "ceiling.dcf_years": 5,
+    "ceiling.dcf_terminal_growth": "0.04",
+    "ceiling.dcf_history_years": 5,
+    "ceiling.dcf_base_years": 3,
+    "ceiling.dcf_g_min": "0",
+    "ceiling.dcf_g_max": "0.05",
     "outlier.min_valid_years": 3,
     "tax.jcp": "0.15",
     "tax.dividend": "0",
@@ -356,3 +365,94 @@ def test_unit_vale_a_soma_das_acoes_da_composicao():
 )
 def test_composicao_da_unit(text, total):
     assert ceiling.parse_unit_composition(text) == total
+
+
+# --- DCF (FCFE) -------------------------------------------------------------
+
+
+def flows(values):
+    """FCFE de 2020..2024 (None = indisponível)."""
+    return {
+        2020 + i: Fcfe(None, "sem DFC detalhado") if v is None else Fcfe(D(v))
+        for i, v in enumerate(values)
+    }
+
+
+def dcf_years():
+    return {y: year(y) for y in range(2020, 2025)}
+
+
+def test_dcf_fluxo_constante_valor_conferido_a_mao():
+    # FCFE 1.000 por ano, g = 0: anuidade de 5 anos a 12% = 3,6047762 -> 3.604,78
+    # perpetuidade: 1.000 x 1,04 / 0,08 = 13.000 x 1,12^-5 (0,56742686) = 7.376,55
+    # total 10.981,33 para 1.000 ações
+    r = ceiling.dcf(dcf_years(), 2024, "comum", flows([1000] * 5), None, P)
+    assert r.status == "ok"
+    assert abs(r.value - D("10.981325326")) < D("1e-6")
+    assert r.inputs["growth_source"] == "histórico do FCFE" and D(r.inputs["g"]) == 0
+
+
+def test_dcf_com_crescimento_informado_pela_serie_geometrica():
+    g, k, gt, base = D("0.03"), D("0.12"), D("0.04"), D(1000)
+    ratio = (1 + g) / (1 + k)
+    pv = base * (1 + g) / (k - g) * (1 - ratio**5)  # soma de 5 termos de uma série geométrica
+    tv = base * (1 + g) ** 5 * (1 + gt) / (k - gt) / (1 + k) ** 5
+    r = ceiling.dcf(dcf_years(), 2024, "comum", flows([1000] * 5), g, P)
+    assert abs(r.value - (pv + tv) / 1000) < D("1e-9")
+    assert r.inputs["growth_source"] == "informado para a empresa"
+
+
+def test_dcf_crescimento_historico_limitado_a_cinco_por_cento_e_base_de_tres_anos():
+    r = ceiling.dcf(dcf_years(), 2024, "comum", flows([500, 600, 700, 800, 1000]), None, P)
+    assert D(r.inputs["g_raw"]) > D("0.18") and D(r.inputs["g"]) == D("0.05")
+    assert abs(D(r.inputs["base"]) - D(2500) / 3) < D("1e-9")  # média de 700, 800 e 1.000
+
+
+def test_dcf_informado_nao_e_limitado_pelo_teto_do_historico():
+    low = ceiling.dcf(dcf_years(), 2024, "comum", flows([1000] * 5), D("0.05"), P)
+    high = ceiling.dcf(dcf_years(), 2024, "comum", flows([1000] * 5), D("0.10"), P)
+    assert D(high.inputs["g"]) == D("0.10") and high.value > low.value
+
+
+def test_dcf_leva_o_valor_a_base_de_acoes_da_data_base():
+    years = dcf_years()
+    years[2024].shares_factor = D(2)
+    r = ceiling.dcf(years, 2024, "comum", flows([1000] * 5), None, P)
+    assert abs(r.value - D("10.981325326") / 2) < D("1e-6")
+
+
+def test_dcf_ponta_nao_positiva_pede_crescimento_informado():
+    r = ceiling.dcf(dcf_years(), 2024, "comum", flows([-100, 500, 600, 700, 800]), None, P)
+    assert r.status == "unavailable" and "informe o crescimento" in r.reason
+    ok_ = ceiling.dcf(dcf_years(), 2024, "comum", flows([-100, 500, 600, 700, 800]), D("0.02"), P)
+    assert ok_.status == "ok"
+
+
+def test_dcf_fcfe_medio_nao_positivo_fica_indisponivel():
+    r = ceiling.dcf(dcf_years(), 2024, "comum", flows([900, 900, -500, -500, -500]), None, P)
+    assert r.status == "unavailable" and "não positivo" in r.reason
+
+
+def test_dcf_exercicio_sem_fcfe_fica_indisponivel_nunca_zero():
+    r = ceiling.dcf(dcf_years(), 2024, "comum", flows([1000, 1000, None, 1000, 1000]), None, P)
+    assert r.status == "unavailable" and r.value is None and 2022 in r.inputs["why"]
+    r = ceiling.dcf(dcf_years(), 2024, "comum", {}, None, P)  # sem DFC carregado
+    assert r.status == "unavailable"
+
+
+def test_dcf_exclui_banco_e_seguradora_e_exige_plano():
+    assert ceiling.dcf(dcf_years(), 2024, "banco", flows([1000] * 5), None, P).status == "excluded"
+    assert ceiling.dcf(dcf_years(), 2024, None, flows([1000] * 5), None, P).status == "unavailable"
+
+
+def test_dcf_taxa_nao_acima_da_perpetuidade_exclui():
+    p = ceiling.CeilingParams.from_config({**CFG, "ceiling.dcf_rate": "0.04"})
+    assert ceiling.dcf(dcf_years(), 2024, "comum", flows([1000] * 5), None, p).status == "excluded"
+
+
+def test_dcf_desligado_nao_entra_nos_metodos():
+    p = ceiling.CeilingParams.from_config({**CFG, "ceiling.dcf_enabled": False})
+    names = [m.method for m in ceiling.evaluate_methods(dcf_years(), "comum", p)]
+    assert "dcf" not in names
+    names = [m.method for m in ceiling.evaluate_methods(dcf_years(), "comum", P, {}, None)]
+    assert names == ["bazin", "graham", "gordon", "multiples", "dcf"]
