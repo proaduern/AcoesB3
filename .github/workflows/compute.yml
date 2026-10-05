@@ -50,6 +50,13 @@ on:
         description: "Imprimir o último preço teto da lista acompanhada (métodos, papéis, faixas)"
         type: boolean
         default: false
+      ceilings_dcf:
+        description: "Com ceilings_list: detalhar o FCFE do DCF por exercício e por conta do DFC"
+        type: boolean
+        default: false
+      dcf_growth:
+        description: "Crescimento do FCFE por empresa no DCF: codigo:fracao (ou codigo:limpar), separados por ponto e vírgula"
+        required: false
 concurrency:
   group: neon-writer
   cancel-in-progress: false
@@ -88,6 +95,20 @@ jobs:
           for it in "${items[@]}"; do
             IFS=':' read -r cvm day decision <<< "$it"
             acoesb3 review outlier --cvm "$cvm" --date "$day" --decision "$decision" --note "decidido pelo usuário em 04/10/2026"
+          done
+      - name: Crescimento do FCFE por empresa
+        if: ${{ inputs.dcf_growth != '' }}
+        env:
+          DCF_GROWTH: ${{ inputs.dcf_growth }}
+        run: |
+          IFS=';' read -ra items <<< "$DCF_GROWTH"
+          for it in "${items[@]}"; do
+            IFS=':' read -r cvm value <<< "$it"
+            if [ "$value" = "limpar" ]; then
+              acoesb3 review dcf-growth --cvm "$cvm" --clear
+            else
+              acoesb3 review dcf-growth --cvm "$cvm" --growth "$value" --note "informado pelo usuário"
+            fi
           done
       - name: Calcula
         if: ${{ !inputs.skip_compute }}
@@ -138,7 +159,12 @@ jobs:
           fi
       - name: Preço teto (leitura)
         if: ${{ inputs.ceilings_list }}
-        run: acoesb3 ceilings list
+        env:
+          CEILINGS_DCF: ${{ inputs.ceilings_dcf }}
+        run: |
+          args=()
+          [ "$CEILINGS_DCF" = "true" ] && args+=(--dcf)
+          acoesb3 ceilings list "${args[@]}"
       - name: Consultas de diagnóstico
         if: ${{ inputs.sql != '' }}
         env:

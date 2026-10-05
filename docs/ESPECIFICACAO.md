@@ -124,7 +124,7 @@ Decididas pelo usuário:
 - **Classes**: o teto vale por papel (ON, PN, unit); a unit é tratada pela composição do FCA (TAEE11 = 1 ON + 2 PN = 3 ações).
 - **Gordon**: o crescimento histórico de 5 anos é o do **dividendo total** (não por ação, não o lucro); o dividendo médio líquido usa os 5 últimos exercícios fechados, com o ano de outlier fora.
 - **P/L e P/VP medianos de 10 anos**: preço de fim de exercício ÷ LPA (lucro ÷ ações do FRE). Ano de prejuízo sai do P/L; empresa com menos de 10 anos usa o que existe.
-- **DCF (FCFE)** para todas as empresas da lista (exceto bancos e seguradoras); exige as contas do fluxo de caixa (DFC), cujos códigos precisam ser verificados na fonte real antes de carregar.
+- **DCF (FCFE)** para todas as empresas da lista (exceto bancos e seguradoras); exige as contas do fluxo de caixa (DFC), cujos códigos foram verificados na fonte real (ver abaixo e `docs/fontes.md`).
 - **Alíquotas** do dividendo médio líquido: as de `tax.*` (JCP 15%, dividendo 0%).
 - **Bancos e seguradoras**: sem Graham e sem DCF; ficam 3 métodos (Bazin, Gordon, P/VP) e K = 2.
 
@@ -139,6 +139,9 @@ Adotadas por padrão (corrigir se discordar; todas configuráveis):
 - **Plano de contas não identificado**: Graham e múltiplos ficam indisponíveis (não dá para saber se é financeira).
 - **Consolidação**: mediana dos métodos `ok`; método excluído por regra ou indisponível não conta. K por quantidade de métodos em `ceiling.k_by_methods` (5 → 3, 4 → 3, 3 → 2). Menos de 3 métodos: `insufficient` (o teto aparece, mas nunca é compra). Observação: com a regra "preço abaixo da mediana", K só pode reprovar com 4 métodos (com 3 e K = 2 ou com 5 e K = 3 a mediana já garante os votos).
 - **Compra**: preço < teto (mediana) **e** preço abaixo do teto de pelo menos K métodos. A faixa (`strong_buy`, `buy`, `hold`, `expensive`) usa só preço ÷ teto: < 80%, 80% a < 100%, 100% a 120% (inclusive), > 120%. Preço abaixo do teto sem os K votos fica na faixa de compra mas com `buy = false`.
+
+- **DCF (FCFE)** (contas verificadas em 05/10/2026, `docs/fontes.md`): FCFE do exercício = caixa operacional (6.01) + investimento em ativos (contas 6.02.xx de imobilizado, intangível e ativo de contrato/concessão, incluindo venda de imobilizado) + dividendos e JCP recebidos de investidas + fluxo de dívida (contas 6.03.xx que não são de acionistas: captações, amortizações, juros, arrendamentos, derivativos, custos de captação). Ficam fora: aplicações financeiras, compra e venda de participações, dividendos e JCP pagos, aumentos e reduções de capital, tesouraria. A classificação é pela descrição da conta (listas de expressões em `fcfe.*`), pois só 6.01, 6.02 e 6.03 são padronizadas. **Base** = média do FCFE dos 3 últimos exercícios (`ceiling.dcf_base_years`); **crescimento** = o informado para a empresa (`review dcf-growth`) ou o crescimento composto do FCFE entre as pontas dos 5 exercícios, limitado a [0%, 5%] (`ceiling.dcf_g_min/max`, limites escolhidos por analogia com o Gordon); ponta de FCFE ausente ou ≤ 0 sem crescimento informado = indisponível; projeta 5 anos a 12% com perpetuidade de 4%; valor total ÷ ações do último exercício na base de ações da data-base. FCFE médio ≤ 0 = indisponível. Exercício sem DFC detalhado = indisponível. Limitações: o valor é o do fim do último exercício (não é levado até a data-base); companhias de transmissão e concessionárias podem registrar o investimento em ativo de contrato dentro do caixa operacional, que então já o desconta.
+- **Conferência do DCF**: `acoesb3 ceilings list --dcf` imprime, por exercício, o FCFE e cada conta do DFC no grupo em que foi classificada; `ceiling.dcf_enabled = false` tira o método sem apagar nada.
 
 ## 6. Alocação do aporte
 

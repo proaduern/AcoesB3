@@ -116,3 +116,15 @@ Verificado em 04/10/2026 baixando os arquivos reais pelo GitHub Actions (sonda t
 
 Sem coluna de escala. Em 2024: Ambev 15.757.657, Vale 4.539.008 e Itaú 4.958.290 ON (**em milhares**); BB
 5.730.834.040, Petrobras 7.442.454.142 e WEG 4.197.317.998 (em unidades). Por isso a fase 2 usa as ações do FRE.
+
+## CVM — DFC (fluxo de caixa) para o FCFE
+
+Verificado em 05/10/2026 pelo GitHub Actions (sonda temporária, já removida) nas DFP de 2021 e 2024 das empresas da lista
+(Alupar, Engie, ISA, Sanepar, Copasa, Vivo, Cemig, CPFL, Taesa, Sabesp, TIM).
+
+- O zip da DFP traz `dfp_cia_aberta_DFC_MI_con`, `DFC_MI_ind`, `DFC_MD_con` e `DFC_MD_ind` (método indireto e direto, consolidado e individual); `ESCALA_MOEDA = MIL`.
+- **Só os totais são padronizados**: `6.01` caixa líquido operacional, `6.02` investimento, `6.03` financiamento, `6.04` variação cambial, `6.05` aumento (redução) de caixa, `6.05.01` e `6.05.02` saldos inicial e final.
+  As contas filhas mudam de código **e de nome** por empresa: imobilizado é `6.02.08` na Alupar, `6.02.03` na Cemig, `6.02.01` na Sanepar e na Vivo; dividendos e JCP pagos são `6.03.06` (Alupar), `6.03.07` (Engie), `6.03.04` (Vivo), `6.03.03` (Cemig, TIM) e `6.03.07` (Sanepar). Por isso o FCFE classifica as filhas pela descrição (`fcfe.*` em `app_config`, ver `acoesb3/fcfe.py`) e guarda o detalhe para conferência (`acoesb3 ceilings list --dcf`).
+- Sanepar, Sabesp e TIM só têm DFC individual em 2021 (sem arquivo consolidado); vale a regra de escopo da seção 9.
+- Observado, não verificado nas notas: ISA tem `6.01.02` (variações de ativos e passivos) de −R$ 3,0 bi em 2021 contra −R$ 15 mi de imobilizado e intangível em `6.02`; é compatível com concessionárias que registram o investimento em ativo de contrato dentro do caixa operacional (nesse caso o `6.01` já o desconta).
+- A carga guarda `6.01` de todas as empresas e `6.02.*`/`6.03.*` só da lista acompanhada (`cvm.dfc_only_watchlist`); empresa nova na lista exige recarregar as DFP (`compute` com `reload_dfp`).
