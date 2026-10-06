@@ -218,3 +218,17 @@ def set_ticker_root(conn, root: str, cvm_code: int, note: str | None):
         (root.upper(), cvm_code, note),
     )
     conn.commit()
+
+
+def set_dcf_growth(conn, cvm_code: int, growth: Decimal | None, note: str | None):
+    """Crescimento anual do FCFE informado para a empresa no DCF; ``growth=None`` remove."""
+    if growth is None:
+        conn.execute("DELETE FROM dcf_growth_override WHERE cvm_code = %s", (cvm_code,))
+    else:
+        conn.execute(
+            "INSERT INTO dcf_growth_override (cvm_code, growth, note) VALUES (%s, %s, %s)"
+            " ON CONFLICT (cvm_code) DO UPDATE SET growth = EXCLUDED.growth, note = EXCLUDED.note,"
+            " set_at = now()",
+            (cvm_code, growth, note),
+        )
+    conn.commit()

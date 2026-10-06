@@ -130,11 +130,12 @@ def cmd_daily(conn, a) -> None:
         cmd_size(conn, a)
 
 
-COMPUTE_STEPS = ("annual", "outliers", "events", "screens")
+COMPUTE_STEPS = ("annual", "outliers", "events", "screens", "ceilings")
 
 
 def cmd_compute(conn, a) -> None:
-    """Fase 2: fatos anuais -> outliers -> eventos societários -> retratos do filtro.
+    """Fases 2 e 3: fatos anuais -> outliers -> eventos societários -> retratos do filtro ->
+    preço teto da lista acompanhada.
 
     As etapas dependem umas das outras; se uma falha, as seguintes não rodam.
     """
@@ -148,6 +149,7 @@ def cmd_compute(conn, a) -> None:
             **compute.build_company_events(conn, cfg),
         },
         "screens": lambda: compute.build_screens(conn, cfg),
+        "ceilings": lambda: compute.build_ceilings(conn, cfg, a.as_of),
     }
     for step in COMPUTE_STEPS:
         if step in steps:
@@ -198,6 +200,10 @@ def cmd_review(conn, a) -> None:
         review.set_class(conn, a.cvm, a.sector, a.plan, a.note)
     elif r == "ticker":
         review.set_ticker_root(conn, a.root, a.cvm, a.note)
+    elif r == "dcf-growth":
+        if a.growth is None and not a.clear:
+            raise SystemExit("informe --growth ou --clear")
+        review.set_dcf_growth(conn, a.cvm, None if a.clear else Decimal(a.growth), a.note)
 
 
 def cmd_watch(conn, a) -> None:
@@ -240,6 +246,60 @@ def cmd_watch(conn, a) -> None:
                 )
 
 
+BANDS_PT = {
+    "strong_buy": "compra forte",
+    "buy": "compra",
+    "hold": "manter",
+    "expensive": "cara, avaliar venda",
+}
+
+
+def _print_fcfe(inputs: dict) -> None:
+    """Por exercício: o FCFE e as contas do DFC em cada grupo (para conferir a classificação)."""
+    for year, d in sorted((inputs.get("fcfe_detail") or {}).items()):
+        print(
+            f"       {year}: FCFE={d['fcfe']} = operacional {d['cfo']} + capex {d['capex']}"
+            f" + dividendos recebidos {d['inflow']} + dívida {d['debt']}"
+            + (f" [{d['reason']}]" if d.get("reason") else "")
+        )
+        for kind in ("capex", "inflow", "debt", "excluded"):
+            for code, desc, value in d["lines"].get(kind, []):
+                if Decimal(value) != 0:
+                    print(f"           {kind:8} {code:8} {desc[:70]:70} {Decimal(value):>18,.0f}")
+    for key in ("base", "g_raw", "g", "growth_source", "equity_value"):
+        if key in inputs:
+            print(f"       {key} = {inputs[key]}")
+
+
+def cmd_ceilings(conn, a) -> None:
+    rep = watch.ceilings(conn, a.cvm)
+    if rep["as_of"] is None:
+        print("Nenhum preço teto calculado: rode `acoesb3 compute --step ceilings`.")
+        return
+    print(f"Preço teto em {rep['as_of']} (valores por ação, na base de ações dessa data)")
+    for c in rep["companies"]:
+        ceil_ = "indisponível" if c["ceiling"] is None else f"{c['ceiling']:.2f}"
+        k = "-" if c["k"] is None else c["k"]
+        print(
+            f"== {c['cvm']} {c['name']} [{c['plan']}] teto={ceil_} métodos={c['methods_ok']} K={k}"
+            f" ({'dados insuficientes' if c['status'] == 'insufficient' else 'ok'})"
+            f" exercício={c['data_base']}"
+        )
+        for method, st, value, reason, inputs in c["methods"]:
+            shown = f"{value:.2f}" if value is not None else f"{st}: {reason}"
+            print(f"     {method:10} {shown}")
+            if method == "dcf" and a.dcf:
+                _print_fcfe(inputs)
+        for tk, kind, price, pdate, ceil_, ratio, band, votes, kreq, buy, why in c["classes"]:
+            if ceil_ is None:
+                print(f"   {tk:8} {kind:4} preço={price:.2f} ({pdate}) sem teto: {why}")
+                continue
+            print(
+                f"   {tk:8} {kind:4} preço={price:.2f} ({pdate}) teto={ceil_:.2f}"
+                f" {ratio:.0%} {BANDS_PT[band]} votos={votes}/{kreq} {'COMPRA' if buy else ''}"
+            )
+
+
 def cmd_sql(conn, a) -> None:
     """Consulta de leitura (diagnóstico): cada consulta roda numa transação somente leitura."""
     for query in a.query:
@@ -277,6 +337,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("size")
     cp = sub.add_parser("compute", help="indicadores, outliers, eventos e filtro (fase 2)")
     cp.add_argument("--step", action="append", choices=COMPUTE_STEPS)
+    cp.add_argument(
+        "--as-of", type=date.fromisoformat, help="data-base do preço teto (padrão: hoje)"
+    )
+    ce = sub.add_parser("ceilings", help="preço teto da lista acompanhada (fase 3)")
+    cs = ce.add_subparsers(dest="ceilings_cmd", required=True)
+    x = cs.add_parser("list", help="último preço teto calculado, com métodos e papéis")
+    x.add_argument("--cvm", type=int, action="append", help="só estas empresas")
+    x.add_argument("--dcf", action="store_true", help="detalha o FCFE por exercício e por conta")
     sq = sub.add_parser("sql", help="consulta somente leitura, para diagnóstico")
     sq.add_argument("--query", action="append", required=True)
     sq.add_argument("--limit", type=int, default=200)
@@ -333,6 +401,11 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--sector")
     x.add_argument("--plan", choices=["comum", "banco", "seguradora"])
     x.add_argument("--note")
+    x = rs.add_parser("dcf-growth", help="crescimento anual do FCFE da empresa no DCF")
+    x.add_argument("--cvm", type=int, required=True)
+    x.add_argument("--growth", help="fração ao ano (0.03 = 3%%)")
+    x.add_argument("--clear", action="store_true", help="volta ao crescimento histórico")
+    x.add_argument("--note")
     x = rs.add_parser("ticker")
     x.add_argument("--root", required=True)
     x.add_argument("--cvm", type=int, required=True)
@@ -359,6 +432,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_review(conn, a)
         elif a.cmd == "watch":
             cmd_watch(conn, a)
+        elif a.cmd == "ceilings":
+            cmd_ceilings(conn, a)
         elif a.cmd == "sql":
             cmd_sql(conn, a)
     return 0

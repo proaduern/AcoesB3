@@ -1,59 +1,44 @@
-# Fase 3 — Preço teto (roteiro para a próxima sessão)
+# Fase 3 — Preço teto (concluída no código e no Neon; pendem revisões do usuário)
 
-Escopo da especificação: seção 5 (5 métodos, mediana, regra de "Compra" com K métodos, faixas). **Vale só para a lista
-acompanhada** (`watchlist`: carteira + radar), decisão de 04/10/2026. Leia, nesta ordem: `CLAUDE.md`,
-`docs/ESPECIFICACAO.md` (seções 3, 4.1, 5, 12), `docs/fase2.md`, este arquivo. Não releia logs nem a conversa anterior.
+**Estado (05/10/2026)**: 5 métodos (Bazin, Graham, Gordon, múltiplos, DCF), mediana, votação K e faixas, por papel (ON, PN, unit),
+só para a lista acompanhada. 264 testes, lint limpo. Rodado no Neon em 05/10/2026 (`compute` com `reload_dfp` + `step=ceilings`):
+18 empresas calculadas; banco do Neon em 431 MB. Regras na seção 5.1 da especificação; formatos do DFC em `docs/fontes.md`.
 
-## O que já existe (fase 2)
+## Como operar
 
-- **Banco** (Neon, ~397 MB de ~512 MB se o plano for o gratuito): `indicator_annual` (lucro, PL, JCP, dividendos DVA e FRE,
-  LPA ON/PN, ações da DFP), `company_event` (desdobramentos/bonificações por empresa), `fre_capital` (ações por data via
-  `shares.shares_at`), `quote_daily` (COTAHIST não ajustado), `screen_result`/`screen_criterion` (filtro por data-base),
-  `dividend_outlier`/`outlier_review`/`dividend_override` (revisão), `watchlist`, `app_config` (todos os parâmetros).
-- **Código** (`pipeline/acoesb3/`): `indicators.py` (fatos anuais, `choose_dividends`), `screen.py` (critérios), `shares.py`,
-  `corporate.py` (eventos), `compute.py` (etapas annual/outliers/events/screens), `watch.py`, `review.py`, `cli.py`.
-- **Decisões que a fase 3 herda**: proventos = DVA primeiro, FRE só se a DVA faltar ou for zero; DPS = total ÷ ações do FRE
-  ajustadas por eventos; valor de mercado = fechamento × ações por classe (papel mais negociado com preço na data); ano de
-  outlier sem decisão fica fora das médias; dado ausente = indisponível; números só da CVM.
-- **Lista acompanhada** (cvm_code): carteira BB 1023, Itaú 19348, BB Seguridade 23159, Caixa Seguridade 23795, Porto Seguro
-  16659, Alupar 21490, Engie 17329, ISA 18376, Sanepar 18627, Copasa 19445, Vivo 17671. Radar: Bradesco 906, Santander 20532,
-  Cemig 2453, CPFL 18660, Taesa 20257, Sabesp 14443, TIM 24929.
+- Calcular: Actions → `compute`, `step=ceilings` (opcional `as_of=AAAA-MM-DD`). Ler: `ceilings_list` (e `ceilings_dcf` para o FCFE por conta).
+  Local: `acoesb3 ceilings list [--cvm N] [--dcf]`.
+- Crescimento do FCFE de uma empresa: `acoesb3 review dcf-growth --cvm N --growth 0.03` (ou `--clear`); no Actions, entrada `dcf_growth` (`codigo:fracao;codigo:limpar`).
+- Tirar o DCF: `ceiling.dcf_enabled = false` em `app_config`. Todo parâmetro `ceiling.*` e `fcfe.*` fica lá.
+- Empresa nova na lista acompanhada: recarregar as DFP (`reload_dfp`) para guardar o DFC detalhado dela.
+- Código: `pipeline/acoesb3/ceiling.py` (métodos, puro), `fcfe.py` (FCFE, puro), `compute.build_ceilings` (banco), tabelas
+  `ceiling_method`, `ceiling_result`, `ceiling_class`, `dcf_growth_override` (migrações 0013 e 0014).
 
-## Como operar sem acesso direto ao Neon
+## Resultado real de 05/10/2026 (preço = fechamento de 02/10/2026) — a conferir pelo usuário
 
-Tudo roda no Actions: workflow `compute` (disparar pela branch ou pela padrão). Entradas úteis: `skip_compute` (só
-imprimir), `step` (annual/outliers/events/screens; `events` leva ~40 min), `sql` (consultas somente leitura separadas por
-`###`), `watch_explain` (critérios, fatos e eventos por empresa), `watch_find`, `watch_add`, `watch_candidates`,
-`priority_only`. Logs: ler com `mcp__github__get_job_logs` com `return_content`; resultado grande vem como arquivo, extrair
-com Python. Testes locais: Postgres em `/var/tmp/pgdata` porta 5433 (reiniciar com `pg_ctl` se cair),
-`TEST_DATABASE_URL=postgresql://postgres@localhost:5433/acoes_test`, `pytest` e `ruff` dentro de `pipeline/`.
+Compra pela regra (preço < mediana e < teto em ≥ K métodos): BBAS3, SANB3/4/11, BBSE3, CMIG4, ISAE4, TAEE3. Dados insuficientes (< 3 métodos):
+Sabesp (Graham e múltiplos excluídos por LPA/VPA ≤ 0, DCF sem crescimento) e TIM (1 método). Caixa Seguridade: sem Bazin/Gordon (abriu capital em 2021).
 
-## Perguntas a fazer ao usuário ANTES de codar (a especificação não cobre)
+## Pendências que dependem do usuário
 
-1. **VPA**: PL do controlador ÷ ações em qual data? (sugestão: fim do último exercício, levado à base de ações de hoje pelos eventos).
-2. **Preço atual**: último fechamento do COTAHIST (defasagem de dias) ou cotação intradiária? Qual data-base do preço teto?
-3. **Classes**: o preço teto é por classe (ON/PN/unit). O valor por ação é o mesmo para as classes da empresa ou usa os
-   proventos por classe do FRE? Como tratar units (TAEE11 = 1 ON + 2 PN)?
-4. **Gordon**: o "crescimento histórico de 5 anos" é do dividendo total, do DPS ou do lucro? E o "dividendo médio líquido"
-   usa os 5 últimos exercícios fechados (ano de outlier fora)?
-5. **P/L e P/VP mediano de 10 anos**: preço de fim de exercício ÷ LPA (lucro ÷ ações do FRE) ou o LPA da DRE? Ano com
-   prejuízo sai do P/L (já na especificação); empresa com menos de 10 anos usa o que existe ou fica indisponível?
-6. **DCF (FCFE)**: para quais empresas da lista? Exige contas do fluxo de caixa (DFC) que **não** estão em `cvm_account`:
-   verificar a fonte real e os códigos antes de carregar (regra: não inventar formato).
-7. **Alíquotas** do dividendo médio líquido: JCP 15%, dividendo 0% (já em `app_config`, `tax.*`).
-8. **Banco e seguradora**: sem Graham e sem DCF (especificação); ficam 3 métodos (Bazin, Gordon, P/VP) e K = 2.
+1. **Porto Seguro (16659) e Caixa Seguridade (23795) estão com plano `comum`** (a DVA delas é de empresa comum), então receberam Graham e DCF,
+   contra a regra "seguradora: sem Graham e sem DCF, 3 métodos, K = 2". Correção: `acoesb3 review class --cvm N --plan seguradora`
+   (muda também a escolha de lucro/PL do filtro dessas empresas; rodar `compute` inteiro depois).
+2. **DCF sensível a um exercício atípico**: Sanepar teve FCFE de R$ 4,2 bi em 2025 contra ~R$ 0,5–0,9 bi antes (CFO de R$ 7,1 bi), o que
+   eleva o DCF (R$ 16,71 contra teto mediano de R$ 6,76). Conferir com `ceilings_dcf`; usar `dcf_growth` ou `ceiling.dcf_enabled`.
+   Cemig, Sabesp e TIM ficam sem DCF até o usuário informar o crescimento (ponta do FCFE ≤ 0).
+3. **Valor por ação igual para ON e PN** (a especificação deixava em aberto; adotado por padrão): ISAE3 vs ISAE4 e ALUP3 vs ALUP4 mostram
+   o mesmo teto. Se quiser teto distinto por classe, é preciso definir a regra (os proventos por classe do FRE não existem de 2025 em diante).
+4. Os padrões `fcfe.*` foram validados nas contas reais de 11 empresas (2021 e 2024/2025); revisar o detalhe do DCF (`ceilings_dcf`) de cada uma.
+5. Pendências da fase 2 continuam: outliers prioritários (`review list --priority`) e eventos suspeitos da lista.
 
-## Entrega esperada da fase 3
+## O que ficou de fora, e por quê
 
-Migração com tabela de resultado (por empresa, data-base e método: valor, entradas em JSON, status/motivo de
-indisponível, fonte, data-base e data de coleta), parâmetros novos em `app_config` (6% do Bazin, k=12%, g em [0%, 5%], 22,5
-do Graham, janelas, K por nº de métodos, faixas 80/100/120%), módulo `pipeline/acoesb3/ceiling.py` (funções puras +
-`compute --step ceilings`), testes com números conferidos à mão (Bazin e Graham fáceis de conferir), comando de leitura
-(`acoesb3 ceilings list`), entrada no workflow `compute`, especificação e `CLAUDE.md` atualizados, nota do que ficou de fora.
-
-## Pendências da fase 2 que afetam a fase 3 (do usuário)
-
-- Revisar os outliers que mudam resultado (`review list --priority`): 18 em 04/10/2026 (Itaú 2019, Bradesco 2018, CPFL 2021 entre
-  as aprovadas) e os eventos suspeitos (633) só das empresas da lista.
-- Critério de queda do DPS: decidido em 04/10/2026, média móvel de 3 anos (limite 4 de até 7 comparações).
-- Caixa Seguridade (abriu capital em 2021) e BB Seguridade (proventos de todos os anos indisponível) ficam com dado insuficiente.
+| Item | Motivo |
+|---|---|
+| Teto por classe com proventos distintos | Sem regra definida; FRE sem dividendos por classe em 2025+ |
+| DCF levado da data do último exercício até a data-base | Não especificado; o valor é o do fim do último exercício |
+| Retratos históricos do preço teto (fins de ano) | Pertence ao backtest (fase 4); `build_ceilings` já aceita `as_of`, mas só a lista acompanhada tem DFC detalhado |
+| Preço teto fora da lista acompanhada | Decisão de 04/10/2026 |
+| Cotação intradiária | Decisão: preço atual = último fechamento do COTAHIST |
+| Tela e simulador (TypeScript) | Fase 5; o simulador exige teste de paridade com `ceiling.py` |

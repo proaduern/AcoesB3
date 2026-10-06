@@ -31,7 +31,7 @@ Duas séries de preço:
 
 - **Filtro**: calculado para a B3 inteira (o backtest precisa de empresas canceladas, sem viés de sobrevivência). Decidido em 04/10/2026: o universo de trabalho é só a **lista acompanhada** (`watchlist`): a **carteira** do usuário e o **radar** (2 a 3 candidatas por segmento da carteira, escolhidas a partir do filtro). Revisão manual, preço teto, DCF, alertas e releases valem só para a lista. `screen.excluded_sectors` perdeu o sentido e fica vazio.
 - **Carteira inicial** (04/10/2026): Banco do Brasil, Itaú Unibanco (ITUB4/ITUB3), BB Seguridade, Caixa Seguridade, Porto Seguro, Alupar, Engie, ISA Energia, Sanepar, Copasa, Vivo (Telefônica Brasil). **Segmentos do radar**: bancos, seguradoras, energia (geração e transmissão), saneamento e telecom (`watch.segments`).
-- **Acompanhamento detalhado** (DCF, release, alertas): a lista acompanhada; o DCF vale para quem o usuário indicar dentro dela.
+- **Acompanhamento detalhado** (DCF, release, alertas): a lista acompanhada; o DCF vale para todas as empresas da lista, exceto bancos e seguradoras (decisão de 05/10/2026, antes: só as que o usuário indicasse).
 - **Classes**: uma linha por empresa no filtro e preço teto por classe. Units calculadas pela composição (ex.: TAEE11 = 1 ON + 2 PN).
 - **Liquidez**: volume médio diário ≥ R$ 1 mi e presença em ≥ 90% dos pregões (últimos 3 meses).
 
@@ -95,7 +95,7 @@ Adotadas por padrão (corrigir se discordar; todas configuráveis):
 | Graham | Todas | √(22,5 × LPA médio de 3 anos × VPA) | LPA ≤ 0, VPA ≤ 0, bancos e seguradoras |
 | Gordon | Todas | D1 ÷ (k − g); k = 12% nominal; g = crescimento histórico de 5 anos limitado a [0%, 5%]; D1 = dividendo médio líquido de 5 anos × (1+g) | k − g < 3 p.p. |
 | Múltiplos | Todas | P/L mediano de 10 anos × LPA médio de 3 anos (não financeiras); P/VP mediano de 10 anos × VPA (bancos e seguradoras). Conta como 1 método. | Anos de lucro negativo fora do P/L |
-| DCF (FCFE) | Só lista do usuário | Desconto a 12%; 5 anos projetados (crescimento histórico, sobrescrevível por empresa) + perpetuidade de 4% | Bancos e seguradoras |
+| DCF (FCFE) | Só lista acompanhada (todas, exceto bancos e seguradoras) | Desconto a 12%; 5 anos projetados (crescimento histórico, sobrescrevível por empresa) + perpetuidade de 4% | Bancos e seguradoras |
 
 **Consolidação**: preço teto = **mediana** dos métodos aplicáveis.
 
@@ -113,6 +113,35 @@ Adotadas por padrão (corrigir se discordar; todas configuráveis):
 | 80–100% | Compra |
 | 100–120% | Manter |
 | > 120% | Cara, avaliar venda |
+
+### 5.1 Definições operacionais do preço teto (fase 3, 05/10/2026)
+
+O preço teto é calculado **só para a lista acompanhada** (`watchlist`), por `compute --step ceilings` (tabelas `ceiling_method`, `ceiling_result`, `ceiling_class`; parâmetros `ceiling.*` em `app_config`).
+
+Decididas pelo usuário:
+- **VPA** = PL do controlador ÷ ações no fim do último exercício, levado à base de ações da data-base pelos eventos societários.
+- **Preço atual** = último fechamento do COTAHIST (não a cotação intradiária).
+- **Classes**: o teto vale por papel (ON, PN, unit); a unit é tratada pela composição do FCA (TAEE11 = 1 ON + 2 PN = 3 ações).
+- **Gordon**: o crescimento histórico de 5 anos é o do **dividendo total** (não por ação, não o lucro); o dividendo médio líquido usa os 5 últimos exercícios fechados, com o ano de outlier fora.
+- **P/L e P/VP medianos de 10 anos**: preço de fim de exercício ÷ LPA (lucro ÷ ações do FRE). Ano de prejuízo sai do P/L; empresa com menos de 10 anos usa o que existe.
+- **DCF (FCFE)** para todas as empresas da lista (exceto bancos e seguradoras); exige as contas do fluxo de caixa (DFC), cujos códigos foram verificados na fonte real (ver abaixo e `docs/fontes.md`).
+- **Alíquotas** do dividendo médio líquido: as de `tax.*` (JCP 15%, dividendo 0%).
+- **Bancos e seguradoras**: sem Graham e sem DCF; ficam 3 métodos (Bazin, Gordon, P/VP) e K = 2.
+
+Adotadas por padrão (corrigir se discordar; todas configuráveis):
+- **Data-base**: a data do cálculo (`--as-of`, padrão hoje). Só valem DFP entregues até a data (mesma regra de ponto no tempo do filtro) e o último fechamento até ela; fechamento com mais de `ceiling.price_max_age_days` (10) de defasagem não vale e o papel fica sem teto. Cada resultado guarda a data-base (último exercício), a data de coleta e a data do preço. A fase 4 reutiliza a mesma função com datas de fim de ano.
+- **Valor por ação igual em todas as classes**: o teto por ação é um só para a empresa (proventos totais ÷ ações totais, como no DPS do filtro); não usa os proventos por classe do FRE, que não existem no layout de 2025+. A unit vale a soma das ações da composição. Composição ilegível (só `1 ON / 2 PN` foi verificado no FCA) deixa a unit sem teto, com o motivo.
+- **Por ação, na base de ações da data-base**: dividendo, LPA e VPA de cada exercício = total ÷ ações do fim do exercício (FRE) ÷ eventos posteriores (`shares_factor`).
+- **Bazin**: média do dividendo líquido por ação nos `ceiling.dividend_years` (5) últimos exercícios ÷ 6%. Ano de outlier sai da média (mínimo `outlier.min_valid_years` = 3 anos restantes); exercício faltando no meio ou sem proventos/ações = indisponível; média ≤ 0 = indisponível.
+- **Gordon**: crescimento composto do dividendo total bruto entre a primeira e a última ponta dos 5 exercícios (4 intervalos), limitado a [0%, 5%]; pontas ausentes, ≤ 0 ou de outlier = indisponível. D1 = dividendo médio líquido por ação × (1 + g); k − g < 3 p.p. exclui o método.
+- **Graham**: LPA médio dos 3 últimos exercícios (com anos de prejuízo dentro da média); LPA médio ≤ 0 ou VPA ≤ 0 exclui o método.
+- **Múltiplos**: P/L de cada exercício = valor de mercado do fim do exercício (fechamento × ações do FRE por classe, o mesmo do DY) ÷ lucro, equivalente a preço ÷ LPA; mediana dos exercícios válidos da janela de 10 anos, **mínimo de 3** (`ceiling.multiple_min_years`, número escolhido por falta de regra); bancos e seguradoras: P/VP mediano × VPA.
+- **Plano de contas não identificado**: Graham e múltiplos ficam indisponíveis (não dá para saber se é financeira).
+- **Consolidação**: mediana dos métodos `ok`; método excluído por regra ou indisponível não conta. K por quantidade de métodos em `ceiling.k_by_methods` (5 → 3, 4 → 3, 3 → 2). Menos de 3 métodos: `insufficient` (o teto aparece, mas nunca é compra). Observação: com a regra "preço abaixo da mediana", K só pode reprovar com 4 métodos (com 3 e K = 2 ou com 5 e K = 3 a mediana já garante os votos).
+- **Compra**: preço < teto (mediana) **e** preço abaixo do teto de pelo menos K métodos. A faixa (`strong_buy`, `buy`, `hold`, `expensive`) usa só preço ÷ teto: < 80%, 80% a < 100%, 100% a 120% (inclusive), > 120%. Preço abaixo do teto sem os K votos fica na faixa de compra mas com `buy = false`.
+
+- **DCF (FCFE)** (contas verificadas em 05/10/2026, `docs/fontes.md`): FCFE do exercício = caixa operacional (6.01) + investimento em ativos (contas 6.02.xx de imobilizado, intangível e ativo de contrato/concessão, incluindo venda de imobilizado) + dividendos e JCP recebidos de investidas + fluxo de dívida (contas 6.03.xx que não são de acionistas: captações, amortizações, juros, arrendamentos, derivativos, custos de captação). Ficam fora: aplicações financeiras, compra e venda de participações, dividendos e JCP pagos, aumentos e reduções de capital, tesouraria. A classificação é pela descrição da conta (listas de expressões em `fcfe.*`), pois só 6.01, 6.02 e 6.03 são padronizadas. **Base** = média do FCFE dos 3 últimos exercícios (`ceiling.dcf_base_years`); **crescimento** = o informado para a empresa (`review dcf-growth`) ou o crescimento composto do FCFE entre as pontas dos 5 exercícios, limitado a [0%, 5%] (`ceiling.dcf_g_min/max`, limites escolhidos por analogia com o Gordon); ponta de FCFE ausente ou ≤ 0 sem crescimento informado = indisponível; projeta 5 anos a 12% com perpetuidade de 4%; valor total ÷ ações do último exercício na base de ações da data-base. FCFE médio ≤ 0 = indisponível. Exercício sem DFC detalhado = indisponível. Limitações: o valor é o do fim do último exercício (não é levado até a data-base); companhias de transmissão e concessionárias podem registrar o investimento em ativo de contrato dentro do caixa operacional, que então já o desconta.
+- **Conferência do DCF**: `acoesb3 ceilings list --dcf` imprime, por exercício, o FCFE e cada conta do DFC no grupo em que foi classificada; `ceiling.dcf_enabled = false` tira o método sem apagar nada.
 
 ## 6. Alocação do aporte
 

@@ -6,13 +6,14 @@ import itertools
 import json
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
 import psycopg
 from psycopg.types.json import Jsonb
 
-from . import corporate, indicators, mapping, screen
+from . import ceiling, corporate, fcfe, indicators, mapping, screen
 from . import shares as shares_mod
 
 log = logging.getLogger(__name__)
@@ -550,11 +551,51 @@ def build_company_events(conn: psycopg.Connection, cfg: dict) -> dict:
     }
 
 
-def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None) -> dict:
-    today = today or date.today()
-    p = screen.ScreenParams.from_config(cfg)
-    excluded_sectors = set(cfg["screen.excluded_sectors"])
-    gap = int(cfg["shares.max_snapshot_gap_days"])
+@dataclass
+class _YearsContext:
+    """Dados carregados uma vez para montar os exercícios (YearData) de qualquer empresa em
+    qualquer data-base: usado pelo filtro (todas as empresas) e pelo preço teto (lista)."""
+
+    cfg: dict
+    gap: int
+    by_company: dict
+    class_secs: dict
+    sec_company: dict
+    ambiguous: dict
+    unmapped: list
+    auto: dict
+    sector: dict
+    outliers: set
+    released: set
+    snapshots: dict
+    events: dict
+    by_cvm: dict
+    prices: dict
+
+    def market_cap(self, cvm, ref, on, pn):
+        total = Decimal(0)
+        for cls, qty in (("on", on), ("pn", pn)):
+            if qty == 0:
+                continue
+            price = next(
+                (
+                    self.prices[(sid, ref)]
+                    for sid in self.class_secs.get(cvm, {}).get(cls, [])
+                    if (sid, ref) in self.prices
+                ),
+                None,
+            )
+            if price is None:
+                return None
+            total += price * qty
+        return total if total > 0 else None
+
+
+def _load_years_context(
+    conn: psycopg.Connection, cfg: dict, only: set[int] | None = None
+) -> _YearsContext:
+    """Carrega o necessário para ``_years_at``. ``only``: restringe às empresas dadas (o preço
+    teto roda só na lista acompanhada); None = todas."""
     by_company, ambiguous, unmapped, auto = _company_securities(conn, cfg)
     sec_company = {sid: c for c, secs in by_company.items() for sid, _, _ in secs}
     class_secs = {c: mapping.class_securities(s) for c, s in by_company.items()}
@@ -590,12 +631,14 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
         """
         SELECT a.filing_id, a.cvm_code, a.reference_date, f.version, f.received_date,
                sf.collected_at, a.profit, a.equity, a.jcp, a.dividends, a.dividends_source,
-               a.fre_jcp, a.fre_dividends, a.fre_available_from
+               a.fre_jcp, a.fre_dividends, a.fre_available_from, a.plan
         FROM indicator_annual a
         JOIN filing f ON f.id = a.filing_id
         JOIN source_file sf ON sf.id = f.source_file_id
+        WHERE %s::int[] IS NULL OR a.cvm_code = ANY(%s)
         ORDER BY a.cvm_code, a.reference_date, f.version
-        """
+        """,
+        (list(only) if only is not None else None,) * 2,
     ).fetchall()
 
     # Preços de fim de exercício para o valor de mercado (ações do FRE x fechamento da classe).
@@ -604,77 +647,89 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     }
     prices = _fiscal_year_end_prices(conn, wanted, int(cfg["market.price_lookback_days"]))
 
-    def market_cap(cvm, ref, on, pn):
-        total = Decimal(0)
-        for cls, qty in (("on", on), ("pn", pn)):
-            if qty == 0:
-                continue
-            price = next(
-                (
-                    prices[(sid, ref)]
-                    for sid in class_secs.get(cvm, {}).get(cls, [])
-                    if (sid, ref) in prices
-                ),
-                None,
-            )
-            if price is None:
-                return None
-            total += price * qty
-        return total if total > 0 else None
-
     by_cvm: dict[int, list] = defaultdict(list)
     for r in rows:
         by_cvm[r[1]].append(r)
+    return _YearsContext(
+        cfg=cfg,
+        gap=int(cfg["shares.max_snapshot_gap_days"]),
+        by_company=by_company,
+        class_secs=class_secs,
+        sec_company=sec_company,
+        ambiguous=ambiguous,
+        unmapped=unmapped,
+        auto=auto,
+        sector=sector,
+        outliers=outliers,
+        released=released,
+        snapshots=snapshots,
+        events=events,
+        by_cvm=by_cvm,
+        prices=prices,
+    )
+
+
+def _years_at(ctx: _YearsContext, cvm: int, as_of: date) -> tuple[dict, dict]:
+    """Exercícios de uma empresa conhecidos em ``as_of`` (versão mais recente entregue até a
+    data, proventos escolhidos pela regra de fonte). Devolve (ano -> YearData, ano -> plano)."""
+    chosen: dict[date, tuple] = {}
+    for r in ctx.by_cvm.get(cvm, []):
+        if r[4] <= as_of:
+            chosen[r[2]] = r
+    known_full = [(d, f, b, a) for d, f, b, a, known in ctx.events.get(cvm, []) if known <= as_of]
+    known_events = [(d, f) for d, f, _, _ in known_full]
+    years: dict[int, screen.YearData] = {}
+    plans: dict[int, str | None] = {}
+    for ref, r in chosen.items():
+        jcp, div, source = indicators.choose_dividends(
+            r[8], r[9], r[10], r[11], r[12], r[13], as_of,
+            prefer=ctx.cfg["dividends.preferred_source"],
+        )  # fmt: skip
+        found = shares_mod.shares_at(ctx.snapshots.get(cvm, []), known_full, ref, as_of, ctx.gap)
+        qty = (found[0] + found[1]) if found else None
+        years[ref.year] = screen.YearData(
+            year=ref.year,
+            reference_date=ref,
+            filing_id=r[0],
+            received_date=r[4],
+            collected_at=r[5],
+            profit=r[6],
+            equity=r[7],
+            jcp=jcp,
+            dividends=div,
+            dividends_source=source,
+            market_cap=ctx.market_cap(cvm, ref, found[0], found[1]) if found else None,
+            shares=qty,
+            shares_factor=corporate.cumulative_factor(known_events, ref, as_of),
+            outlier=(cvm, ref) in ctx.outliers and (cvm, ref) not in ctx.released,
+        )
+        plans[ref.year] = r[14]
+    return years, plans
+
+
+def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None) -> dict:
+    today = today or date.today()
+    p = screen.ScreenParams.from_config(cfg)
+    excluded_sectors = set(cfg["screen.excluded_sectors"])
+    ctx = _load_years_context(conn, cfg)
 
     dates = snapshot_dates(today, int(cfg["screen.snapshot_first_year"]))
     out_result, out_crit = [], []
     status_counts: dict[str, dict[str, int]] = {}
     for as_of in dates:
-        liq, _days = _liquidity(conn, as_of, int(cfg["liquidity.months"]), sec_company)
+        liq, _days = _liquidity(conn, as_of, int(cfg["liquidity.months"]), ctx.sec_company)
         counts: dict[str, int] = defaultdict(int)
-        for cvm, cvm_rows in by_cvm.items():
-            # Para cada data-base, a versão mais recente entregue até a data.
-            chosen: dict[date, tuple] = {}
-            for r in cvm_rows:
-                if r[4] <= as_of:
-                    chosen[r[2]] = r
-            if not chosen:
+        for cvm in ctx.by_cvm:
+            years, _plans = _years_at(ctx, cvm, as_of)
+            if not years:
                 continue
-            known_full = [
-                (d, f, b, a) for d, f, b, a, known in events.get(cvm, []) if known <= as_of
-            ]
-            known_events = [(d, f) for d, f, _, _ in known_full]
-            years: dict[int, screen.YearData] = {}
-            for ref, r in chosen.items():
-                jcp, div, source = indicators.choose_dividends(
-                    r[8], r[9], r[10], r[11], r[12], r[13], as_of,
-                    prefer=cfg["dividends.preferred_source"],
-                )  # fmt: skip
-                found = shares_mod.shares_at(snapshots.get(cvm, []), known_full, ref, as_of, gap)
-                qty = (found[0] + found[1]) if found else None
-                years[ref.year] = screen.YearData(
-                    year=ref.year,
-                    reference_date=ref,
-                    filing_id=r[0],
-                    received_date=r[4],
-                    collected_at=r[5],
-                    profit=r[6],
-                    equity=r[7],
-                    jcp=jcp,
-                    dividends=div,
-                    dividends_source=source,
-                    market_cap=market_cap(cvm, ref, found[0], found[1]) if found else None,
-                    shares=qty,
-                    shares_factor=corporate.cumulative_factor(known_events, ref, as_of),
-                    outlier=(cvm, ref) in outliers and (cvm, ref) not in released,
-                )
             res = screen.evaluate(
                 years,
                 liq.get(cvm),
                 p,
-                excluded=sector.get(cvm) in excluded_sectors,
+                excluded=ctx.sector.get(cvm) in excluded_sectors,
                 as_of=as_of,
-                listed=cvm in by_company,
+                listed=cvm in ctx.by_company,
             )
             counts[res.status] += 1
             out_result.append((as_of, cvm, res.status, res.data_base, res.collected_at))
@@ -720,10 +775,182 @@ def build_screens(conn: psycopg.Connection, cfg: dict, today: date | None = None
     ).fetchone()[0]
     return {
         "snapshots": status_counts,
-        "auto_mapped_roots": {r: [c, why] for r, (c, why) in sorted(auto.items())},
-        "unmapped_tickers_top": sorted(unmapped, key=lambda t: -t[1])[:15],
-        "ambiguous_roots": {k: v for k, v in list(ambiguous.items())[:15]},
+        "auto_mapped_roots": {r: [c, why] for r, (c, why) in sorted(ctx.auto.items())},
+        "unmapped_tickers_top": sorted(ctx.unmapped, key=lambda t: -t[1])[:15],
+        "ambiguous_roots": {k: v for k, v in list(ctx.ambiguous.items())[:15]},
         "suspected_events_pending": pending_events,
+    }
+
+
+# --- 5. Preço teto (lista acompanhada) ---------------------------------------
+
+CEILING_SOURCES = {
+    "bazin": "CVM DFP (proventos) + FRE (ações e eventos)",
+    "graham": "CVM DFP (lucro, PL) + FRE (ações e eventos)",
+    "gordon": "CVM DFP (proventos) + FRE (ações e eventos)",
+    "multiples": "CVM DFP (lucro, PL) + FRE (ações) + B3 COTAHIST (fechamento de fim de exercício)",
+    "dcf": "CVM DFP (DFC: caixa operacional, investimento e financiamento) + FRE (ações)",
+}
+
+
+def _load_fcfe(conn, filing_ids: list[int], rules: fcfe.FcfeRules) -> dict[int, fcfe.Fcfe]:
+    """filing_id -> FCFE do exercício, a partir das contas do DFC (6.01, 6.02.xx, 6.03.xx)."""
+    lines: dict[int, list] = defaultdict(list)
+    for fid, code, desc, value in conn.execute(
+        """
+        SELECT filing_id, account_code, description, value FROM financial_line
+        WHERE filing_id = ANY(%s) AND statement IN ('DFC_MI', 'DFC_MD')
+          AND account_code ~ '^6\\.0[123](\\.[0-9]{2})?$'
+        """,
+        (filing_ids,),
+    ):
+        lines[fid].append((code, desc or "", value))
+    return {fid: fcfe.compute_fcfe(ls, rules) for fid, ls in lines.items()}
+
+
+def _latest_prices(conn, sids: list[int], as_of: date, max_age: int) -> dict[int, tuple]:
+    """security_id -> (data, fechamento): último pregão até ``as_of`` dentro de ``max_age`` dias."""
+    if not sids:
+        return {}
+    return {
+        sid: (d, close)
+        for sid, d, close in conn.execute(
+            """
+            SELECT t.sec, q.trade_date, q.close
+            FROM unnest(%s::int[]) AS t(sec)
+            JOIN LATERAL (
+                SELECT trade_date, close FROM quote_daily
+                WHERE security_id = t.sec AND trade_date <= %s
+                  AND trade_date > %s::date - %s::int
+                ORDER BY trade_date DESC LIMIT 1) q ON true
+            """,
+            (sids, as_of, as_of, max_age),
+        )
+    }
+
+
+def _unit_compositions(conn, as_of: date) -> dict[str, str]:
+    """ticker -> composição da unit no FCA mais recente entregue até ``as_of`` (\"1 ON / 2 PN\")."""
+    return dict(
+        conn.execute(
+            """
+            SELECT DISTINCT ON (cs.ticker) cs.ticker, cs.unit_composition
+            FROM company_security cs JOIN filing f ON f.id = cs.filing_id
+            WHERE cs.ticker IS NOT NULL AND cs.unit_composition IS NOT NULL
+              AND f.received_date <= %s
+            ORDER BY cs.ticker, f.received_date DESC, f.version DESC
+            """,
+            (as_of,),
+        )
+    )
+
+
+def build_ceilings(conn: psycopg.Connection, cfg: dict, as_of: date | None = None) -> dict:
+    """Preço teto da lista acompanhada na data ``as_of`` (padrão: hoje). Só usa DFP entregues até
+    a data e o último fechamento até ela. Substitui o resultado da mesma data; as outras ficam."""
+    as_of = as_of or date.today()
+    p = ceiling.CeilingParams.from_config(cfg)
+    watch = [r[0] for r in conn.execute("SELECT cvm_code FROM watchlist ORDER BY cvm_code")]
+    if not watch:
+        return {"as_of": as_of, "companies": 0, "warning": "lista acompanhada vazia"}
+    ctx = _load_years_context(conn, cfg, only=set(watch))
+    sids = [sid for c in watch for sid, _t, _v in ctx.by_company.get(c, [])]
+    prices = _latest_prices(conn, sids, as_of, p.price_max_age_days)
+    compositions = _unit_compositions(conn, as_of)
+    rules = fcfe.FcfeRules.from_config(cfg)
+    growth = dict(conn.execute("SELECT cvm_code, growth FROM dcf_growth_override"))
+
+    method_rows, result_rows, class_rows = [], [], []
+    summary: dict[str, dict] = {}
+    for cvm in watch:
+        years, plans = _years_at(ctx, cvm, as_of)
+        last = max(years) if years else None
+        plan = plans.get(last) if last else None
+        by_filing = _load_fcfe(conn, [y.filing_id for y in years.values()], rules) if years else {}
+        by_year = {y: by_filing[v.filing_id] for y, v in years.items() if v.filing_id in by_filing}
+        methods = ceiling.evaluate_methods(years, plan, p, by_year, growth.get(cvm))
+        cons = ceiling.consolidate(methods, p)
+        data_base = years[last].reference_date if last else None
+        collected = max((y.collected_at for y in years.values() if y.collected_at), default=None)
+        for m in methods:
+            method_rows.append(
+                (
+                    as_of,
+                    cvm,
+                    m.method,
+                    m.status,
+                    m.value,
+                    m.reason,
+                    Jsonb(m.inputs, dumps=_dumps),
+                    CEILING_SOURCES[m.method],
+                    data_base,
+                    collected,
+                )  # fmt: skip
+            )
+        result_rows.append(
+            (as_of, cvm, cons.status, cons.methods_ok, cons.k_required, cons.ceiling, plan,
+             data_base, collected)
+        )  # fmt: skip
+        listed = []
+        for sid, ticker, _vol in sorted(ctx.by_company.get(cvm, []), key=lambda t: t[1]):
+            if sid not in prices:
+                continue  # sem fechamento recente: papel sem negociação ou ticker antigo
+            price_date, price = prices[sid]
+            kind = mapping.ticker_class(ticker)
+            mult, reason = 1, None
+            if kind == "other":
+                kind = "unit"
+                mult = ceiling.parse_unit_composition(compositions.get(ticker))
+                if mult is None:
+                    reason = "composição da unit indisponível no FCA"
+            if mult is None:
+                class_rows.append(
+                    (as_of, cvm, ticker, kind, None, price, price_date, None, None, None, None,
+                     None, False, reason)
+                )  # fmt: skip
+                continue
+            v = ceiling.value_class(ticker, kind, mult, price, price_date, methods, cons, p)
+            class_rows.append(
+                (as_of, cvm, ticker, kind, mult, price, price_date, v.ceiling, v.ratio, v.band,
+                 v.votes, v.k_required, v.buy, None)
+            )  # fmt: skip
+            listed.append(ticker)
+        summary[str(cvm)] = {
+            "status": cons.status,
+            "methods_ok": cons.methods_ok,
+            "tickers": listed,
+        }
+
+    with conn.cursor() as cur:
+        for table in ("ceiling_method", "ceiling_result", "ceiling_class"):
+            cur.execute(f"DELETE FROM {table} WHERE as_of = %s", (as_of,))
+        cur.executemany(
+            "INSERT INTO ceiling_method (as_of, cvm_code, method, status, value, reason, inputs,"
+            " source, data_base, collected_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            method_rows,
+        )
+        cur.executemany(
+            "INSERT INTO ceiling_result (as_of, cvm_code, status, methods_ok, k_required, ceiling,"
+            " plan, data_base, collected_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            result_rows,
+        )
+        cur.executemany(
+            "INSERT INTO ceiling_class (as_of, cvm_code, ticker, kind, multiplier, price,"
+            " price_date, ceiling, ratio, band, votes, k_required, buy, reason)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            class_rows,
+        )
+    conn.commit()
+    by_status: dict[str, int] = defaultdict(int)
+    for r in result_rows:
+        by_status[r[2]] += 1
+    return {
+        "as_of": as_of,
+        "companies": len(watch),
+        "by_status": dict(by_status),
+        "tickers_valued": sum(1 for r in class_rows if r[7] is not None),
+        "tickers_without_ceiling": [r[2] for r in class_rows if r[7] is None],
+        "buy": [r[2] for r in class_rows if r[12]],
     }
 
 
