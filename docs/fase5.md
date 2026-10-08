@@ -1,6 +1,6 @@
 # Fase 5 — Tela Next.js, login Google, filtro, ficha da empresa e simulador (roteiro)
 
-**Estado (08/10/2026)**: decisões tomadas com o usuário; etapa 5.0 (esqueleto do `web/`) feita. Este documento é o roteiro; as regras
+**Estado (08/10/2026)**: decisões tomadas com o usuário; etapas 5.0 (esqueleto) e 5.1 (login) feitas no código; o login real ainda não foi conferido na Vercel. Este documento é o roteiro; as regras
 ficam na seção 9.1 da especificação. A tela **só lê** resultados prontos do Neon; a única lógica de cálculo em TypeScript
 é o simulador, com teste de paridade contra `pipeline/acoesb3/ceiling.py`.
 
@@ -89,7 +89,7 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 | Etapa | Entrega | Teste / verificação |
 |---|---|---|
 | 5.0 (feita) | Esqueleto `web/` (Next.js App Router, TypeScript estrito, ESLint, Vitest), `web-ci.yml` (lint, tipos, testes) em `web/**` | CI verde com página vazia |
-| 5.1 | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
+| 5.1 (código feito) | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
 | 5.2 | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
 | 5.3 | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
 | 5.4 | Filtro da B3 | Idem; contagem por status bate com o banco |
@@ -134,3 +134,19 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 - Next.js 16, React 19, TypeScript 5 estrito (`noUncheckedIndexedAccess`), ESLint 9, Vitest 5; Node 22 no CI. `web-ci.yml` roda lint, tipos, testes e build em `web/**`.
 - `npm audit`: 0 vulnerabilidades nas dependências de produção. Restam avisos `braces/micromatch` só no ferramental do ESLint (dev); o conserto sugerido (`eslint-config-next@14`) seria um retrocesso, então fica registrado.
 - A página inicial é só um marcador; login, menu e telas entram nas etapas 5.1 em diante.
+
+## Notas da etapa 5.1
+
+- Auth.js v5 (`next-auth@5.0.0-beta.32`, versão fixa: ainda é beta, mas é a que suporta Next 16). Sessão JWT de 7 dias.
+- `signIn` só aceita e-mail **verificado** pelo Google e presente em `ALLOWED_EMAILS` (falha fechada: lista vazia = ninguém entra). Recusa cai em `/acesso-negado`.
+- Duas barreiras: `src/proxy.ts` (Next 16 chama o antigo middleware de proxy) manda quem não tem sessão para `/login`; `requireUser()` confere a lista **de novo** a cada página (grupo `(app)`) e vale para toda consulta ao banco a partir da 5.2. Tirar um e-mail de `ALLOWED_EMAILS` vale na próxima requisição, sem esperar a sessão expirar.
+- Conferido localmente com servidor de produção e variáveis falsas: `/`, `/filtro` e `/backtest` redirecionam (307) para `/login`; `/login`, `/acesso-negado` e `/api/auth/providers` respondem 200. O fluxo completo com o Google só pode ser conferido na Vercel.
+- Testes: `parseAllowedEmails` e `isAllowedEmail` (caixa, espaços, separadores, sufixo/prefixo, lista vazia).
+- Menu: Lista, Filtro, Backtest e Sair; páginas ainda são marcadores.
+
+## Quando publicar na Vercel
+
+Já agora, com a 5.1: o login só se prova numa URL real (redirecionamento OAuth), e é mais barato achar um erro de
+configuração do Google com a tela vazia do que com as telas prontas. `NEON_DATABASE_URL_POOLED` só é necessária a partir da 5.2.
+A partir daí, cada PR gera preview; produção sai da branch padrão. Lembrete: a URI de redirecionamento do cliente OAuth
+vale por domínio; previews com URL própria não fazem login, só o domínio de produção (ou um domínio fixo de preview).

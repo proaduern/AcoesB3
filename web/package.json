@@ -2,7 +2,9 @@
   "name": "acoesb3-web",
   "version": "0.0.0",
   "private": true,
-  "engines": { "node": ">=20.9.0" },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -13,6 +15,7 @@
   },
   "dependencies": {
     "next": "^16.4.0",
+    "next-auth": "5.0.0-beta.32",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
