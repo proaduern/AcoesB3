@@ -7,6 +7,7 @@ Exemplos:
     acoesb3 daily
     acoesb3 compute
     acoesb3 review list
+    acoesb3 backtest run
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from decimal import Decimal
 
 from psycopg.types.json import Jsonb
 
-from . import compute, load, review, watch
+from . import backtest_run, compute, load, review, watch
 from .db import connect, get_config, migrate
 
 log = logging.getLogger("acoesb3")
@@ -300,6 +301,76 @@ def cmd_ceilings(conn, a) -> None:
             )
 
 
+def _pct(v) -> str:
+    return "n/d" if v is None else f"{float(v):.1%}"
+
+
+def _print_segment(seg: dict) -> None:
+    print(f"   período {seg['start']} a {seg['end']}")
+    for name in ("strategy_net", "strategy_gross", "idiv", "ibov", "cdi"):
+        st = seg["series"].get(name)
+        if not st:
+            print(f"   {name:15} indisponível")
+            continue
+        print(
+            f"   {name:15} retorno={_pct(st['total_return'])} a.a.={_pct(st['cagr'])}"
+            f" queda máx={_pct(st['max_drawdown'])} vol={_pct(st['volatility'])}"
+        )
+    for ref, w in seg["windows"].items():
+        print(
+            f"   janelas vs {ref:5} {w['lost']}/{w['windows']} perdidas ({_pct(w['lost_share'])})"
+        )
+    d = seg["death"]
+    verdict = {None: "indisponível", True: "ACIONADO", False: "não acionado"}[d["triggered"]]
+    print(
+        f"   critério de morte: {verdict} (janelas {_pct(d['lost_share'])} > 50%?"
+        f" {d['windows_rule_triggered']}; queda extra {_pct(d['extra_drawdown'])} > 10 p.p.?"
+        f" {d['drawdown_rule_triggered']})"
+    )
+
+
+def cmd_backtest(conn, a) -> None:
+    cfg = compute.load_config(conn)
+    c = a.backtest_cmd
+    if c == "benchmarks":
+        _run(conn, "backtest_benchmarks", lambda: backtest_run.load_benchmarks(conn, cfg))
+    elif c == "run":
+        detail = _run(conn, "backtest_fit", lambda: backtest_run.run_fit(conn, cfg, a.scenario))
+        print(f"Ajuste (até {backtest_run.fit_end(cfg)}); a validação não foi calculada.")
+        for name, row in detail.items():
+            print(
+                f"== {name}: líquido {_pct(row['net_cagr'])} a.a."
+                f" (bruto {_pct(row['gross_cagr'])});"
+                f" IDIV {_pct(row['idiv_cagr'])}, Ibovespa {_pct(row['ibov_cagr'])},"
+                f" CDI {_pct(row['cdi_cagr'])}; queda máx {_pct(row['net_mdd'])}"
+                f" (IDIV {_pct(row['idiv_mdd'])}); morte={row['death']['triggered']}"
+            )
+    elif c == "report":
+        for r in backtest_run.report(conn):
+            m = r["metrics"]
+            print(
+                f"## {r['kind']} {r['scenario']} (execução {r['id']}, {r['created_at']:%Y-%m-%d})"
+            )
+            for seg_name in ("fit", "validation"):
+                if seg_name in m:
+                    print(f"  [{seg_name}]")
+                    _print_segment(m[seg_name])
+            fl = m["flows"]
+            print(
+                f"  aportes={fl['net_invested']} valor final líquido={fl['net_final_value']}"
+                f" taxas={fl['net_fees']} impostos={fl['net_taxes']}"
+                f" proventos={fl['net_dividends']} 1ª compra={fl['net_first_buy']}"
+            )
+            if a.warnings:
+                for w in r["warnings"]:
+                    print(f"  ! {w}")
+    elif c == "freeze":
+        print(_dumps(backtest_run.freeze(conn, cfg, a.scenario, a.note)))
+    elif c == "validate":
+        detail = _run(conn, "backtest_validation", lambda: backtest_run.validate(conn, cfg))
+        print(_dumps(detail))
+
+
 def cmd_sql(conn, a) -> None:
     """Consulta de leitura (diagnóstico): cada consulta roda numa transação somente leitura."""
     for query in a.query:
@@ -345,6 +416,19 @@ def main(argv: list[str] | None = None) -> int:
     x = cs.add_parser("list", help="último preço teto calculado, com métodos e papéis")
     x.add_argument("--cvm", type=int, action="append", help="só estas empresas")
     x.add_argument("--dcf", action="store_true", help="detalha o FCFE por exercício e por conta")
+    bk = sub.add_parser("backtest", help="backtest, comparação e validação (fase 4)")
+    bs = bk.add_subparsers(dest="backtest_cmd", required=True)
+    bs.add_parser("benchmarks", help="coleta Ibovespa e IDIV (B3) e CDI (Banco Central)")
+    x = bs.add_parser("run", help="ajuste: roda os cenários até validation_start - 1")
+    x.add_argument("--scenario", action="append", help="só estes cenários (padrão: todos)")
+    x = bs.add_parser("report", help="resultados gravados")
+    x.add_argument(
+        "--warnings", action="store_true", help="imprime também os avisos de cada execução"
+    )
+    x = bs.add_parser("freeze", help="congela o cenário escolhido com os dados de ajuste")
+    x.add_argument("--scenario", required=True)
+    x.add_argument("--note")
+    bs.add_parser("validate", help="mede a validação, uma única vez, com o cenário congelado")
     sq = sub.add_parser("sql", help="consulta somente leitura, para diagnóstico")
     sq.add_argument("--query", action="append", required=True)
     sq.add_argument("--limit", type=int, default=200)
@@ -434,6 +518,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_watch(conn, a)
         elif a.cmd == "ceilings":
             cmd_ceilings(conn, a)
+        elif a.cmd == "backtest":
+            cmd_backtest(conn, a)
         elif a.cmd == "sql":
             cmd_sql(conn, a)
     return 0

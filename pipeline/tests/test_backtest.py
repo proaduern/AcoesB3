@@ -319,3 +319,57 @@ def test_no_signal_no_trades():
     book = flat_book(days, {"AAAA3": "10"})
     r = bt.simulate(params(), days, {}, book, {}, {}, {}, 10)
     assert r.trades == [] and r.cota == {} and r.invested == 0
+
+
+# --- proventos por exercício ----------------------------------------------------------------------
+
+REF = date(2020, 12, 31)
+
+
+def pays_for(
+    shares, jcp, div, filing, lines=(), events=(), timing="fre_dates_else_filing", ref=REF
+):
+    return bt.payments_for_year(ref, shares, jcp, div, filing, list(lines), list(events), timing)
+
+
+def test_payments_follow_fre_dates_proportionally():
+    lines = [
+        (False, D(300), date(2020, 6, 1)),
+        (False, D(700), date(2021, 3, 1)),
+        (True, D(100), date(2020, 12, 1)),
+    ]
+    pays = pays_for(1000, D(80), D(500), date(2021, 3, 20), lines)
+    got = {p.pay_date: (p.dividend, p.jcp) for p in pays}
+    # dividendos 500 repartidos 30% / 70% por 1.000 ações; JCP 80 inteiro em 1/12
+    assert got[date(2020, 6, 1)] == (D("0.15"), D(0))
+    assert got[date(2021, 3, 1)] == (D("0.35"), D(0))
+    assert got[date(2020, 12, 1)] == (D(0), D("0.08"))
+
+
+def test_payments_without_fre_fall_back_to_filing_date():
+    pays = pays_for(100, D(10), D(90), date(2026, 3, 20), ref=date(2025, 12, 31))
+    assert pays == [Payment(date(2026, 3, 20), D("0.9"), D("0.1"))]
+
+
+def test_payments_lines_without_date_use_filing_date():
+    pays = pays_for(10, D(0), D(50), date(2021, 3, 20), [(False, D(100), None)])
+    assert pays == [Payment(date(2021, 3, 20), D(5), D(0))]
+
+
+def test_payments_filing_timing_ignores_fre_dates():
+    lines = [(False, D(100), date(2020, 6, 1))]
+    pays = pays_for(10, D(0), D(50), date(2021, 3, 20), lines, timing="filing")
+    assert [p.pay_date for p in pays] == [date(2021, 3, 20)]
+
+
+def test_payments_none_timing_and_missing_inputs():
+    assert pays_for(10, D(0), D(50), date(2021, 3, 20), timing="none") == []
+    assert pays_for(None, D(0), D(50), date(2021, 3, 20), timing="filing") == []
+    assert pays_for(10, None, D(50), date(2021, 3, 20), timing="filing") == []
+
+
+def test_payments_adjusted_for_split_between_exercise_end_and_payment():
+    # Desdobramento 2:1 em 01/02/2021; pagamento em 01/03/2021: o valor por ação cai à metade.
+    pays = pays_for(100, D(0), D(100), date(2021, 3, 1), events=[(date(2021, 2, 1), D(2))],
+                    timing="filing")  # fmt: skip
+    assert pays[0].dividend == D("0.5")  # 100 / (100 ações x 2)

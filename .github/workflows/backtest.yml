@@ -1,0 +1,74 @@
+name: backtest
+# Fase 4: coleta dos índices, ajuste, congelamento e validação do backtest (docs/fase4.md).
+# A validação é medida uma única vez (índice único no banco) e só roda com a confirmação "SIM".
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "benchmarks (Ibovespa, IDIV, CDI), run (ajuste), report, freeze ou validate"
+        required: true
+        type: choice
+        options: [benchmarks, run, report, freeze, validate]
+      scenario:
+        description: "run: cenários separados por ponto e vírgula (vazio = todos); freeze: o cenário escolhido"
+        required: false
+      note:
+        description: "freeze: justificativa da escolha"
+        required: false
+      warnings:
+        description: "report: imprime também os avisos de cada execução"
+        type: boolean
+        default: false
+      confirm_validation:
+        description: "validate: digite SIM para medir a validação (só pode ser feito uma vez)"
+        required: false
+concurrency:
+  group: neon-writer
+  cancel-in-progress: false
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: pipeline
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      STEP: ${{ inputs.step }}
+      SCENARIO: ${{ inputs.scenario }}
+      NOTE: ${{ inputs.note }}
+      WARNINGS: ${{ inputs.warnings }}
+      CONFIRM: ${{ inputs.confirm_validation }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Verifica segredo
+        run: test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
+      - name: Backtest
+        run: |
+          case "$STEP" in
+            benchmarks) acoesb3 backtest benchmarks ;;
+            run)
+              args=()
+              if [ -n "$SCENARIO" ]; then
+                IFS=';' read -ra names <<< "$SCENARIO"
+                for n in "${names[@]}"; do args+=(--scenario "$n"); done
+              fi
+              acoesb3 backtest run "${args[@]}" ;;
+            report)
+              args=()
+              [ "$WARNINGS" = "true" ] && args+=(--warnings)
+              acoesb3 backtest report "${args[@]}" ;;
+            freeze)
+              test -n "$SCENARIO" || { echo "::error::informe o cenário"; exit 1; }
+              args=(--scenario "$SCENARIO")
+              [ -n "$NOTE" ] && args+=(--note "$NOTE")
+              acoesb3 backtest freeze "${args[@]}" ;;
+            validate)
+              test "$CONFIRM" = "SIM" || { echo "::error::a validação é medida uma única vez: digite SIM em confirm_validation"; exit 1; }
+              acoesb3 backtest validate ;;
+          esac
+      - run: acoesb3 size

@@ -479,3 +479,56 @@ def _execute(
     if not spent_any and cash > 0:
         res.unfilled_cash_days += 1
     return cash
+
+
+# --- Proventos recebidos -------------------------------------------------------------------------
+
+# (é JCP, valor em R$, data de pagamento ou None): uma linha do FRE
+FreLine = tuple[bool, Decimal, date | None]
+
+DIVIDEND_TIMINGS = ("fre_dates_else_filing", "filing", "none")
+
+
+def payments_for_year(
+    ref: date,
+    shares: int | None,
+    jcp: Decimal | None,
+    dividends: Decimal | None,
+    filing_date: date,
+    fre_lines: list[FreLine],
+    events: list[tuple[date, Decimal]],
+    timing: str,
+) -> list[Payment]:
+    """Proventos de um exercício como pagamentos por ação nas datas de pagamento.
+
+    O total do exercício (``jcp`` e ``dividends``, da fonte já escolhida pelo filtro) é repartido
+    pelas datas de pagamento do FRE, na proporção dos valores do FRE (linhas sem data caem na data
+    de entrega da DFP). Sem linhas do FRE para a espécie (anos de FRE 2025 em diante, que não trazem
+    pagamentos), o total é pago inteiro na data de entrega da DFP. ``timing``: ``filing`` ignora
+    o FRE; ``none`` desliga os proventos (retorno só de preço).
+
+    Valor por ação = total ÷ ações no fim do exercício, levado à base de ações da data de pagamento
+    pelos eventos societários entre as duas datas.
+    """
+    if timing == "none" or not shares or jcp is None or dividends is None:
+        return []
+    by_date: dict[date, list[Decimal]] = defaultdict(lambda: [ZERO, ZERO])  # [dividendo, jcp]
+    for idx, (total, want_jcp) in enumerate(((dividends, False), (jcp, True))):
+        if total <= 0:
+            continue
+        weights: dict[date, Decimal] = defaultdict(Decimal)
+        if timing == "fre_dates_else_filing":
+            for is_jcp, amount, paid_on in fre_lines:
+                if is_jcp == want_jcp and amount > 0:
+                    weights[paid_on or filing_date] += amount
+        wsum = sum(weights.values(), ZERO)
+        if wsum <= 0:
+            weights, wsum = {filing_date: D(1)}, D(1)
+        for when, w in weights.items():
+            share = total * w / wsum
+            factor = D(1)
+            for d, f in events:
+                if ref < d <= when:
+                    factor *= f
+            by_date[when][idx] += share / (D(shares) * factor)
+    return [Payment(d, v[0], v[1]) for d, v in sorted(by_date.items())]
