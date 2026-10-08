@@ -1,6 +1,6 @@
 # Fase 5 — Tela Next.js, login Google, filtro, ficha da empresa e simulador (roteiro)
 
-**Estado (08/10/2026)**: decisões tomadas com o usuário, nenhum código escrito. Este documento é o roteiro; as regras
+**Estado (08/10/2026)**: decisões tomadas com o usuário; etapa 5.0 (esqueleto do `web/`) feita. Este documento é o roteiro; as regras
 ficam na seção 9.1 da especificação. A tela **só lê** resultados prontos do Neon; a única lógica de cálculo em TypeScript
 é o simulador, com teste de paridade contra `pipeline/acoesb3/ceiling.py`.
 
@@ -88,7 +88,7 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 
 | Etapa | Entrega | Teste / verificação |
 |---|---|---|
-| 5.0 | Esqueleto `web/` (Next.js App Router, TypeScript estrito, ESLint, Vitest), `web-ci.yml` (lint, tipos, testes) em `web/**` | CI verde com página vazia |
+| 5.0 (feita) | Esqueleto `web/` (Next.js App Router, TypeScript estrito, ESLint, Vitest), `web-ci.yml` (lint, tipos, testes) em `web/**` | CI verde com página vazia |
 | 5.1 | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
 | 5.2 | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
 | 5.3 | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
@@ -128,3 +128,9 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
   a consulta deve juntar as três.
 - **Viés de sobrevivência**: o texto vem do banco; se `warnings` e `universe` vierem vazios, a tela deve mostrar um aviso padrão
   e não ocultar a faixa (teste da etapa 5.8).
+
+## Notas da etapa 5.0
+
+- Next.js 16, React 19, TypeScript 5 estrito (`noUncheckedIndexedAccess`), ESLint 9, Vitest 5; Node 22 no CI. `web-ci.yml` roda lint, tipos, testes e build em `web/**`.
+- `npm audit`: 0 vulnerabilidades nas dependências de produção. Restam avisos `braces/micromatch` só no ferramental do ESLint (dev); o conserto sugerido (`eslint-config-next@14`) seria um retrocesso, então fica registrado.
+- A página inicial é só um marcador; login, menu e telas entram nas etapas 5.1 em diante.
