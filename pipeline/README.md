@@ -34,6 +34,11 @@ acoesb3 review event-add --ticker ABCD3 --date 2022-06-01 --factor 1.1
 acoesb3 review dividend --cvm 5410 --date 2024-12-31 --jcp 0 --dividends 1000000 --source manual
 acoesb3 review class --cvm 5410 [--sector "..."] [--plan comum|banco|seguradora]
 acoesb3 review ticker --root ABCD --cvm 1234
+acoesb3 backtest benchmarks    # fase 4: Ibovespa e IDIV (B3) e CDI (Banco Central)
+acoesb3 backtest run [--scenario aporte_1000]   # ajuste até validation_start - 1 (não toca a validação)
+acoesb3 backtest report [--warnings]            # resultados gravados
+acoesb3 backtest freeze --scenario aporte_1000 [--note "..."]   # escolha com os dados de ajuste
+acoesb3 backtest validate      # mede a validação UMA vez, com o cenário congelado
 ```
 
 Arquivo sem mudança desde a última coleta (mesmo sha256) é pulado; `--force` reprocessa.
@@ -46,5 +51,6 @@ Reprocessar é seguro: a carga substitui o que veio do mesmo documento/arquivo.
 - `acoesb3/load.py` — download + carga.
 - `acoesb3/indicators.py`, `screen.py`, `corporate.py`, `shares.py`, `mapping.py`, `fre.py` — cálculos e parsers da fase 2 (sem banco).
 - `acoesb3/compute.py`, `review.py` — fase 2 no banco e revisão manual.
+- `acoesb3/backtest.py`, `performance.py`, `benchmarks.py` — fase 4 sem banco (estratégia, custos e impostos; métricas e critério de morte; parsers dos índices); `backtest_run.py` — fase 4 no banco.
 - `acoesb3/cli.py` — linha de comando.
 - `tests/fixtures/` — linhas reais dos arquivos oficiais (ver o README de lá).
