@@ -1,15 +1,28 @@
 name: web-ci
 on:
   push:
-    paths: ["web/**", ".github/workflows/web-ci.yml"]
+    paths: ["web/**", "pipeline/migrations/**", ".github/workflows/web-ci.yml"]
   pull_request:
-    paths: ["web/**", ".github/workflows/web-ci.yml"]
+    paths: ["web/**", "pipeline/migrations/**", ".github/workflows/web-ci.yml"]
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: acoes
+          POSTGRES_PASSWORD: acoes
+          POSTGRES_DB: acoes_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acoes" --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: web
+    env:
+      # As migrações do pipeline montam o esquema; sem esta variável os testes de banco seriam pulados.
+      TEST_DATABASE_URL: postgresql://acoes:acoes@localhost:5432/acoes_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

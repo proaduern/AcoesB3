@@ -90,7 +90,7 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 |---|---|---|
 | 5.0 (feita) | Esqueleto `web/` (Next.js App Router, TypeScript estrito, ESLint, Vitest), `web-ci.yml` (lint, tipos, testes) em `web/**` | CI verde com página vazia |
 | 5.1 (código feito) | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
-| 5.2 | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
+| 5.2 (feita) | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
 | 5.3 | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
 | 5.4 | Filtro da B3 | Idem; contagem por status bate com o banco |
 | 5.5 | Ficha: preço teto, filtro, preço, origem | Valores da ficha conferidos contra `ceilings list --dcf` em 2 empresas |
@@ -150,3 +150,13 @@ Já agora, com a 5.1: o login só se prova numa URL real (redirecionamento OAuth
 configuração do Google com a tela vazia do que com as telas prontas. `NEON_DATABASE_URL_POOLED` só é necessária a partir da 5.2.
 A partir daí, cada PR gera preview; produção sai da branch padrão. Lembrete: a URI de redirecionamento do cliente OAuth
 vale por domínio; previews com URL própria não fazem login, só o domínio de produção (ou um domínio fixo de preview).
+
+## Notas da etapa 5.2
+
+- **Leitura**: driver `pg` (funciona no pooler da Neon e no Postgres de teste). `src/lib/db/pool.ts` usa só `NEON_DATABASE_URL_POOLED`; datas saem como texto `AAAA-MM-DD` (sem deslocamento de fuso) e `numeric` como texto (sem perder precisão).
+- **Somente leitura garantida pelo banco**: `readOnly()` abre `BEGIN READ ONLY`; INSERT/UPDATE/DROP falham com "read-only transaction" (testado). Não usa opções de sessão, que o pooler não aceita. O papel `SELECT` do Neon continua sendo uma camada extra opcional.
+- **Uma porta só**: `src/lib/db/queries.ts` (`server-only`) chama `requireUser()` antes de cada consulta; a lógica de SQL fica em `core.ts`, que recebe o pool e por isso é testável sem login.
+- **Formatadores** (`src/lib/format.ts`, `decimal.js`): nulo, vazio e não numérico viram "indisponível", nunca 0; reais, percentual, data e data/hora (Brasília) em pt-BR. **ESCALA_MOEDA**: o banco já guarda reais (o pipeline converte em `cvm.scale_value`), então a tela não reescala; `toReais(valor, escala)` existe só para dado cru e recusa escala desconhecida (como o Python). Testes: R$ 41,085 bi lido em reais x em mil.
+- **Procedência**: componente `Provenance` (fonte, data-base, coletado em) e `DataFooter` em toda tela do grupo `(app)`: data do cálculo do teto, último fechamento e retrato do filtro. Com o banco fora do ar mostra aviso em vez de erro.
+- **Testes de banco** (`src/lib/db/db.test.ts`): aplicam as migrações do pipeline num Postgres de teste (`TEST_DATABASE_URL`); sem a variável são pulados. O `web-ci.yml` agora sobe um Postgres e roda isso; os gatilhos incluem `pipeline/migrations/**`.
+- 32 testes, lint, tipos e build passando.

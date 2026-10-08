@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { signOut } from "@/auth";
+import { DataFooter } from "@/components/DataFooter";
 import { requireUser } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         </form>
       </header>
       {children}
+      <DataFooter />
     </>
   );
 }

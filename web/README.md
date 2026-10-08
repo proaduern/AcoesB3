@@ -6,6 +6,8 @@ Tela Next.js (App Router, TypeScript estrito). Só lê resultados prontos do Neo
 ```bash
 cd web
 npm ci
+# testes de banco: Postgres vazio; as migrações do pipeline são aplicadas (apaga o schema public)
+export TEST_DATABASE_URL=postgresql://usuario:senha@localhost:5432/acoes_test
 npm run lint && npm run typecheck && npm test && npm run build
 npm run dev
 ```
