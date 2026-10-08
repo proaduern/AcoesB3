@@ -44,8 +44,8 @@ for url in (
             print("páginas:", len(rd.pages))
             for i, p in enumerate(rd.pages):
                 txt = p.extract_text() or ""
-                if i < 3 or re.search(r"(?i)vigência|a vista|à vista|demais investidores|pessoa física", txt) and "%" in txt and i < 30:
+                if 4 <= i <= 9 or i == 0:
                     print(f"--- pág {i + 1}")
-                    print(txt[:2600])
+                    print(txt[:3800])
         except Exception as e:  # noqa: BLE001
             print("erro pdf", e)

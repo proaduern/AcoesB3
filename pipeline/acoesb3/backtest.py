@@ -157,8 +157,8 @@ def allocate(
     """Reparte ``cash`` entre as empresas elegíveis.
 
     - ``buys``: um papel por empresa (o de menor preço / teto) com ``buy`` verdadeiro.
-    - Peso-alvo igual: 1 / N, N = empresas na carteira ou elegíveis.
-    - Elegível: peso abaixo do alvo. Escolhem-se até ``max_stocks`` com maior desconto (1 - razão).
+    - Peso-alvo igual: 1 / N. Elegível: peso abaixo de 1 / (carteira + candidatas); escolhem-se até
+      ``max_stocks`` com maior desconto (1 - razão); o alvo final é 1 / (carteira + escolhidas).
     - O desconto define a parte de cada uma (proporcional), limitada ao que falta para o alvo e,
       se ativos, aos limites por empresa e por setor; a sobra de uma redistribui-se às outras.
     - O que não coube fica em caixa (quem chama decide o que fazer com ele).
@@ -168,13 +168,16 @@ def allocate(
     total = cash + sum(value_by_company.values(), ZERO)
     if total <= 0:
         return []
-    companies = set(value_by_company) | {c.company for c in buys}
-    target = total / len(companies)
-    eligible = [c for c in buys if value_by_company.get(c.company, ZERO) < target]
+    held_all = set(value_by_company)
+    # Escolha: quem está abaixo do peso igual de (carteira + candidatas), os de maior desconto.
+    target0 = total / len(held_all | {c.company for c in buys})
+    eligible = [c for c in buys if value_by_company.get(c.company, ZERO) < target0]
     eligible.sort(key=lambda c: (c.ratio, c.ticker))
     chosen = eligible[: p.max_stocks]
     if not chosen:
         return []
+    # Peso-alvo final: igual entre as empresas que ficam na carteira (as atuais e as escolhidas).
+    target = total / len(held_all | {c.company for c in chosen})
 
     held = {c for c, v in value_by_company.items() if v > 0}
     n_positions = len(held | {c.company for c in chosen})
