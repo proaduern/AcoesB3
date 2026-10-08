@@ -1,8 +1,9 @@
-# Fase 4 — Backtest (código e ajuste no Neon concluídos; pendem a escolha do cenário e a validação, do usuário)
+# Fase 4 — Backtest (concluída: ajuste, congelamento do dy_5 e validação medida uma vez)
 
 **Estado (08/10/2026)**: estratégia mensal, custos, impostos, índices de comparação, métricas, critério de morte e o fluxo
-ajuste → congelamento → validação única. 328 testes (com Postgres), lint limpo. Ajuste rodado no Neon em 08/10/2026 (6 cenários,
-2012-01 a 2023-12). **A validação (2024-01 em diante) não foi calculada**: só o usuário decide o cenário a congelar e autoriza a medida única.
+ajuste → congelamento → validação única. 328 testes (com Postgres), lint limpo. Ajuste rodado no Neon (6 cenários, 2012-01 a 2023-12).
+**O usuário escolheu o `dy_5` (Bazin a 5%) e autorizou a medida da validação, feita uma única vez em 08/10/2026 (execução 7).**
+O banco não aceita outra: nenhum parâmetro pode mais ser reajustado com base nela.
 Regras e decisões: seção 8.1 da especificação. Formatos das fontes: `docs/fontes.md`.
 
 ## Como operar
@@ -42,11 +43,25 @@ Leituras e cuidados (não são recomendação):
 - O Ibovespa e o IDIV são séries de pontos da B3; só o IDIV está confirmado como índice de retorno total (ver `fontes.md`).
 - Nenhum cenário aciona o critério de morte no ajuste. A regra de queda máxima está folgada porque a estratégia (46,6%) cai menos que o IDIV (57,3%).
 
-## O que o usuário precisa decidir
+## Resultado da validação (2024-01-01 a 2025-12-31, `dy_5` congelado, medida única)
 
-1. **Cenário a congelar** com os dados de 2012–2023 (`freeze`). Pelos números acima o `dy_5` tem retorno parecido com o base e queda máxima bem menor
-   (33% contra 47%); o base tem o maior retorno. Escolher é seu: o ajuste acabou aqui e a validação não reabre depois de medida.
-2. **Autorizar a medida única** da validação (`validate`, confirmação SIM no workflow). Ela cobre 2024-01-01 a 2025-12-31 (cerca de 2 anos, não 3: ver abaixo).
+| Série | Retorno no período | a.a. | Queda máx. |
+|---|---|---|---|
+| Estratégia líquida | 33,2% | 15,4% | 14,7% |
+| Estratégia bruta (sem custos e impostos) | 34,8% | 16,0% | 14,7% |
+| IDIV | 26,6% | 12,5% | 10,6% |
+| CDI | 26,8% | 12,5% | 0% |
+| Ibovespa | 20,1% | 9,5% | 13,7% |
+
+- **Critério de morte: não acionado.** A estratégia perde do IDIV em 2 de 24 janelas de 5 anos que terminam no período (8,3%, limite 50%) e a queda máxima é 4,1 p.p. pior que a do IDIV (limite 10 p.p.).
+- Cuidados na leitura: são só 2 anos e as 24 janelas se sobrepõem quase por inteiro; o ajuste tinha mostrado 14,2% a.a. e queda de 33,1%, e a validação manteve o retorno acima do IDIV e do CDI, mas com a queda máxima maior que a do IDIV (no ajuste era menor). O viés de sobrevivência continua valendo (lista acompanhada de hoje), os proventos de 2026 estão fora (período termina em 2025-12-31) e a carteira recebeu R$ 131,5 mil de proventos em todo o período.
+- Em todo o período (2012–2025) foram R$ 167 mil de aportes, valor final líquido de R$ 589,7 mil, R$ 10,7 mil de imposto e R$ 389 de taxas da B3.
+- Para reproduzir: `acoesb3 backtest report --warnings` (execução 7, tipo `validation`).
+
+## O que o usuário ainda precisa decidir
+
+1. ~~Cenário a congelar~~ e ~~medida da validação~~: feitos em 08/10/2026 (`dy_5`).
+2. **Período de validação**: cobre 2024-01-01 a 2025-12-31 (cerca de 2 anos, não 3), pela decisão 4 abaixo.
 3. **Retorno total (resposta 4)**: o COTAHIST não traz ajuste por proventos, então adotei a DVA/FRE com datas do FRE (até o exercício 2021) e a data de entrega da DFP
    nos demais (`backtest.dividend_timing`). Confirmar ou pedir outra regra (por exemplo, repartir o total do exercício ao longo do ano seguinte).
 4. **Fim do período**: `backtest.end_date = 2025-12-31`, porque o FRE de 2025 em diante não traz pagamentos e a DVA de 2026 ainda não existe; medir 2026 penalizaria a estratégia

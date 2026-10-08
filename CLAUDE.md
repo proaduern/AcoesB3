@@ -27,7 +27,7 @@ Sistema pessoal de carteira de ações B3: filtro de empresas perenes, preço te
 - Segredos ficam no GitHub Actions / Vercel. Nomes: `NEON_DATABASE_URL` (conexão direta, sem `-pooler`, usada pelo pipeline no GitHub Actions), `NEON_DATABASE_URL_POOLED` (com `-pooler`, usada pela tela na Vercel), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `ALLOWED_EMAILS`.
 
 ## Fluxo de trabalho
-- Uma fase da especificação por sessão (seção 11). Fase atual: **4** (backtest), implementada no código e rodada no Neon só para o **ajuste**; pendem a escolha do cenário (`backtest freeze`) e a medida única da validação (`backtest validate`), ambas do usuário. As fases 2 e 3 estão concluídas (ver `docs/fase3.md`, pendências). **Comece por `docs/fase4.md`** (estado, resultado do ajuste, o que decidir).
+- Uma fase da especificação por sessão (seção 11). Fase 4 (backtest) **concluída**: ajuste, congelamento do `dy_5` e validação medida uma vez em 08/10/2026 (`docs/fase4.md`, decisões pendentes: proventos, fim do período, tarifas históricas). Próxima: **5** (tela Next.js, login, ficha da empresa e simulador). As fases 2 e 3 têm pendências de revisão do usuário (`docs/fase3.md`).
 - Cada fase entrega: código, testes passando, e uma nota do que ficou de fora e por quê.
 - Ao concluir uma fase, atualize "Fase atual" acima.
 - Antes de push: rode os testes e o lint do pacote alterado.
