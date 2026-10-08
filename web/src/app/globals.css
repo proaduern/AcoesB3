@@ -7,3 +7,17 @@ main.center { max-width: 24rem; margin-top: 15vh; text-align: center; }
 .topbar .who { margin-right: 0.75rem; color: #666; font-size: 0.875rem; }
 button { font: inherit; padding: 0.4rem 0.9rem; cursor: pointer; }
 .datafooter { max-width: 64rem; margin: 2rem auto 1rem; padding: 0 1rem; color: #666; font-size: 0.8rem; display: grid; gap: 0.25rem; }
+h1 { margin: 0 0 0.25rem; }
+h2 { margin: 1.5rem 0 0.5rem; }
+.sub { color: #666; font-size: 0.8rem; }
+.provenance { display: block; margin-top: 1.5rem; color: #666; }
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 1rem 0; }
+.filters > span { margin-left: 0.5rem; font-size: 0.85rem; color: #666; }
+.chip { padding: 0.15rem 0.6rem; border: 1px solid #bbb; border-radius: 999px; color: inherit; text-decoration: none; font-size: 0.85rem; background: #fff; }
+.chip.active { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; background: #fff; }
+th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #e5e5e5; vertical-align: top; }
+th { font-size: 0.75rem; text-transform: uppercase; color: #555; white-space: nowrap; }
+.num { text-align: right; white-space: nowrap; }
+tr.buy td { background: #eef7ee; }

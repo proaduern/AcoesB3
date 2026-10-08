@@ -91,7 +91,7 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 | 5.0 (feita) | Esqueleto `web/` (Next.js App Router, TypeScript estrito, ESLint, Vitest), `web-ci.yml` (lint, tipos, testes) em `web/**` | CI verde com página vazia |
 | 5.1 (código feito) | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
 | 5.2 (feita) | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
-| 5.3 | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
+| 5.3 (feita) | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
 | 5.4 | Filtro da B3 | Idem; contagem por status bate com o banco |
 | 5.5 | Ficha: preço teto, filtro, preço, origem | Valores da ficha conferidos contra `ceilings list --dcf` em 2 empresas |
 | 5.6 | Simulador TS + `parity-export` + CI de paridade | Paridade com tolerância 1e-9; diff do fixture no CI |
@@ -160,3 +160,13 @@ vale por domínio; previews com URL própria não fazem login, só o domínio de
 - **Procedência**: componente `Provenance` (fonte, data-base, coletado em) e `DataFooter` em toda tela do grupo `(app)`: data do cálculo do teto, último fechamento e retrato do filtro. Com o banco fora do ar mostra aviso em vez de erro.
 - **Testes de banco** (`src/lib/db/db.test.ts`): aplicam as migrações do pipeline num Postgres de teste (`TEST_DATABASE_URL`); sem a variável são pulados. O `web-ci.yml` agora sobe um Postgres e roda isso; os gatilhos incluem `pipeline/migrations/**`.
 - 32 testes, lint, tipos e build passando.
+
+## Notas da etapa 5.3
+
+- **Lista acompanhada** (`/`): parte da tabela `watchlist` (não do teto), então empresa sem cálculo continua na lista como "Sem preço teto calculado". Uma linha por papel (ON, PN, unit), carteira antes do radar. Colunas: papel e empresa, segmento, preço e data do fechamento, teto, preço ÷ teto, faixa, votos/K, situação, status do filtro (retrato mais recente) e exercício (data-base).
+- **Situação sempre em texto**, nunca só cor: `COMPRA` só quando o banco diz `buy`; `insufficient` vira "Dados insuficientes" mesmo que `buy` venha verdadeiro; abaixo do teto sem os K votos aparece como "Abaixo do teto, sem os votos exigidos"; papel sem teto mostra o motivo gravado (`reason`, ex.: unit sem composição legível).
+- **Filtros por URL** (`?papel=`, `?segmento=`, `?compra=1`), sem estado no cliente; valor desconhecido é ignorado. "Só compra" mantém apenas os papéis em compra.
+- **Rodapé e procedência** como na 5.2; a página mostra a data-base mais recente e a coleta mais recente da lista.
+- Os nomes ainda não são links: a ficha (`/empresa/[cvm]`) é a etapa 5.5.
+- Testes: regras puras (situação, filtros, URL), consulta contra Postgres com as migrações do pipeline (cálculos de duas datas, só vale o último; retrato do filtro mais recente; empresa sem cálculo; precisão em texto) e renderização da página com dados simulados (nenhum "R$ 0,00" nem "0/0" para dado ausente). 48 testes no total.
+- **Não conferido**: a lista contra o Neon real (não há acesso a ele nesta sessão) nem o visual no navegador; isso fica para a primeira publicação na Vercel, comparando com `acoesb3 ceilings list`.
