@@ -21,3 +21,9 @@ th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #e5
 th { font-size: 0.75rem; text-transform: uppercase; color: #555; white-space: nowrap; }
 .num { text-align: right; white-space: nowrap; }
 tr.buy td { background: #eef7ee; }
+.search { display: flex; gap: 0.5rem; align-items: center; margin: 1rem 0 0; }
+.search input[type="search"] { font: inherit; padding: 0.35rem 0.6rem; min-width: 14rem; }
+.pager { display: flex; gap: 1rem; margin: 1rem 0; }
+table.inner { margin-top: 0.4rem; font-size: 0.8rem; }
+details summary { cursor: pointer; color: #555; font-size: 0.8rem; }
+code { font-size: 0.78rem; background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; }

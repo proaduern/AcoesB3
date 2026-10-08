@@ -92,7 +92,7 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 | 5.1 (código feito) | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
 | 5.2 (feita) | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
 | 5.3 (feita) | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
-| 5.4 | Filtro da B3 | Idem; contagem por status bate com o banco |
+| 5.4 (feita) | Filtro da B3 | Idem; contagem por status bate com o banco |
 | 5.5 | Ficha: preço teto, filtro, preço, origem | Valores da ficha conferidos contra `ceilings list --dcf` em 2 empresas |
 | 5.6 | Simulador TS + `parity-export` + CI de paridade | Paridade com tolerância 1e-9; diff do fixture no CI |
 | 5.7 | Aba do simulador na ficha | Com os parâmetros padrão, o resultado é idêntico ao gravado (`ceiling_class`) |
@@ -170,3 +170,12 @@ vale por domínio; previews com URL própria não fazem login, só o domínio de
 - Os nomes ainda não são links: a ficha (`/empresa/[cvm]`) é a etapa 5.5.
 - Testes: regras puras (situação, filtros, URL), consulta contra Postgres com as migrações do pipeline (cálculos de duas datas, só vale o último; retrato do filtro mais recente; empresa sem cálculo; precisão em texto) e renderização da página com dados simulados (nenhum "R$ 0,00" nem "0/0" para dado ausente). 48 testes no total.
 - **Não conferido**: a lista contra o Neon real (não há acesso a ele nesta sessão) nem o visual no navegador; isso fica para a primeira publicação na Vercel, comparando com `acoesb3 ceilings list`.
+
+## Notas da etapa 5.4
+
+- **Filtro da B3** (`/filtro`): retrato mais recente de `screen_result` para a B3 inteira, 50 empresas por página, lista acompanhada primeiro. Busca por nome, nome fantasia ou ticker do FCA (sem diferenciar caixa; `%` e `_` valem como texto), filtro por status com a contagem de cada um (as contagens respeitam a busca e "só a lista", não o status escolhido) e "só a lista acompanhada". Página além do fim é ajustada para a última.
+- **Critérios**: cada empresa mostra o que reprovou e o que ficou indisponível, e um bloco expansível com valor, limite e resultado de todos os critérios. Valor no formato do critério (contagem de anos/quedas, percentual, volume em reais); critério sem valor = "indisponível"; motivo (`data`, `history`, `no_security`, `outliers`) em português.
+- **Pendências** (`/filtro/pendencias`): proventos suspeitos da lista sem decisão (e quantos há na B3 inteira), eventos societários suspeitos (30 mais recentes) e anos de DVA zerada a lançar, cada um com o comando a rodar. A tela só lê; a decisão continua por comando ou workflow.
+- **Limites conhecidos**: o ticker mostrado é o do FCA (`company_security`), que pode listar papel antigo; o limite de cada critério é o texto gravado pelo pipeline (só troca o ponto decimal por vírgula); empresas fora da lista não têm link para ficha (a ficha é só da lista).
+- Testes: regras puras, consultas contra Postgres com as migrações (retrato mais recente, status, busca com curingas, ticker, paginação sem repetir empresa, pendências com decisão e só da lista) e renderização das duas páginas. 67 testes no total.
+- **Não conferido**: contra o Neon real (contagens por status e pendências devem bater com `compute` e `review list`) nem o visual no navegador; fica para a primeira publicação.
