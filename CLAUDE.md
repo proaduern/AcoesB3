@@ -24,10 +24,10 @@ Sistema pessoal de carteira de ações B3: filtro de empresas perenes, preço te
 
 ## Segredos
 - Nunca coloque credenciais no código nem peça que o usuário cole credenciais no chat.
-- Segredos ficam no GitHub Actions / Vercel. Nomes: `NEON_DATABASE_URL` (conexão direta, sem `-pooler`, usada pelo pipeline no GitHub Actions), `NEON_DATABASE_URL_POOLED` (com `-pooler`, usada pela tela na Vercel), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `ALLOWED_EMAILS`.
+- Segredos ficam no GitHub Actions / Vercel. Nomes: `NEON_DATABASE_URL` (conexão direta, sem `-pooler`, usada pelo pipeline no GitHub Actions), `NEON_DATABASE_URL_POOLED` (com `-pooler`, usada pela tela na Vercel), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `ALLOWED_EMAILS`, `AUTH_SECRET` (Auth.js, só na Vercel).
 
 ## Fluxo de trabalho
-- Uma fase da especificação por sessão (seção 11). Fase 4 (backtest) **concluída**: ajuste, congelamento do `dy_5` e validação medida uma vez em 08/10/2026 (`docs/fase4.md`, decisões pendentes: proventos, fim do período, tarifas históricas). Próxima: **5** (tela Next.js, login, ficha da empresa e simulador). As fases 2 e 3 têm pendências de revisão do usuário (`docs/fase3.md`).
+- Uma fase da especificação por sessão (seção 11). Fase 4 (backtest) **concluída**: ajuste, congelamento do `dy_5` e validação medida uma vez em 08/10/2026 (`docs/fase4.md`, decisões pendentes: proventos, fim do período, tarifas históricas). Fase **5** (tela Next.js, login, ficha da empresa e simulador) **em andamento**: decisões e roteiro em `docs/fase5.md`, nenhum código ainda. As fases 2 e 3 têm pendências de revisão do usuário (`docs/fase3.md`).
 - Cada fase entrega: código, testes passando, e uma nota do que ficou de fora e por quê.
 - Ao concluir uma fase, atualize "Fase atual" acima.
 - Antes de push: rode os testes e o lint do pacote alterado.

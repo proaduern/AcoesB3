@@ -195,6 +195,17 @@ Adotadas por padrão (corrigir se discordar; todas configuráveis):
 - **PDFs**: Google Drive do usuário, uma pasta por empresa. Acesso só aos arquivos criados pelo app. App no Google Cloud publicado (não em modo teste).
 - **Alertas**: só dentro do sistema por enquanto. Falha de coleta também gera e-mail automático do GitHub Actions. Toda tela mostra a data-base e a data de coleta de cada dado.
 
+### 9.1 Definições operacionais da tela (fase 5, 08/10/2026)
+
+Decididas pelo usuário (roteiro em `docs/fase5.md`):
+- **Telas**: lista acompanhada, filtro da B3 inteira, backtest e ficha da empresa (com o simulador numa aba), menu fixo no topo.
+- **Ficha**: os 5 métodos do preço teto, critérios do filtro com histórico anual, gráfico de preço com a linha do teto, eventos societários e dados de origem.
+- **Simulador**: recalcula parâmetros (`ceiling.*`) e preço a partir dos insumos anuais já gravados em `ceiling_method.inputs`; não troca insumos à mão. Implementação única em TypeScript com `decimal.js`, teste de paridade contra `ceiling.py` e fixture regerado no CI.
+- **Aviso de viés de sobrevivência**: faixa fixa, sem botão de fechar, no topo da tela do backtest, mais selo "universo de hoje" ao lado de cada retorno e do gráfico; o texto vem de `backtest_run.warnings` / `universe.survivorship_warning`.
+- **Somente leitura**: revisão de outliers/eventos e mudança de configuração continuam por comando e Actions (a frase "revisão por comando até a tela existir" da seção 4.1 vale até uma fase própria de escrita).
+- **Login**: Auth.js com Google e `ALLOWED_EMAILS`, conferida no login e em todo acesso ao banco no servidor; segredo novo `AUTH_SECRET`.
+- **Repositório e deploy**: `web/` na raiz, projeto da Vercel com Root Directory `web`, produção pela branch padrão e preview por PR.
+
 ## 10. Regras de qualidade de dados
 
 - Todo indicador exibe fonte, data-base e data de coleta.
