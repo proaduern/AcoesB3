@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; margin: 0; color: #1a1a1a; background: #fafafa; }
+main { max-width: 64rem; margin: 0 auto; padding: 1.5rem 1rem; }
+main.center { max-width: 24rem; margin-top: 15vh; text-align: center; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1rem; border-bottom: 1px solid #ddd; background: #fff; position: sticky; top: 0; }
+.topbar nav { display: flex; gap: 1rem; }
+.topbar a { color: inherit; text-decoration: none; font-weight: 600; }
+.topbar .who { margin-right: 0.75rem; color: #666; font-size: 0.875rem; }
+button { font: inherit; padding: 0.4rem 0.9rem; cursor: pointer; }
