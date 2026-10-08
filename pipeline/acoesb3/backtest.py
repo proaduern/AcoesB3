@@ -204,26 +204,25 @@ def allocate(
     while open_ and remaining > 0:
         weights = {k: max(D(1) - c.ratio, D("0.0001")) for k, c in open_.items()}
         wsum = sum(weights.values())
-        saturated = []
+        free: dict[int, Decimal] = {}
         for k, c in open_.items():
-            share = remaining * weights[k] / wsum
-            free = room[k] - amounts[k]
+            f = room[k] - amounts[k]
             if sector_cap_on:
                 used = sector_value[c.sector] + sum(
                     amounts[o.company] for o in chosen if o.sector == c.sector
                 )
-                free = min(free, p.sector_cap * total - used)
-            if share >= free:
-                saturated.append((k, max(free, ZERO)))
-        if not saturated:
+                f = min(f, p.sector_cap * total - used)
+            free[k] = max(f, ZERO)
+        binding = [k for k in open_ if remaining * weights[k] / wsum >= free[k]]
+        if not binding:
             for k in open_:
                 amounts[k] += remaining * weights[k] / wsum
-            remaining = ZERO
             break
-        for k, free in saturated:
-            amounts[k] += free
-            remaining -= free
-            del open_[k]
+        # Fixa primeiro quem trava antes (menor espaço em relação ao seu peso) e refaz a conta.
+        k = min(binding, key=lambda x: free[x] / weights[x])
+        amounts[k] += free[k]
+        remaining -= free[k]
+        del open_[k]
     by_company = {c.company: c for c in chosen}
     return [
         Allocation(k, by_company[k].ticker, a, D(1) - by_company[k].ratio)

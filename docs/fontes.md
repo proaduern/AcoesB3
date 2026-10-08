@@ -128,3 +128,49 @@ Verificado em 05/10/2026 pelo GitHub Actions (sonda temporária, já removida) n
 - Sanepar, Sabesp e TIM só têm DFC individual em 2021 (sem arquivo consolidado); vale a regra de escopo da seção 9.
 - Observado, não verificado nas notas: ISA tem `6.01.02` (variações de ativos e passivos) de −R$ 3,0 bi em 2021 contra −R$ 15 mi de imobilizado e intangível em `6.02`; é compatível com concessionárias que registram o investimento em ativo de contrato dentro do caixa operacional (nesse caso o `6.01` já o desconta).
 - A carga guarda `6.01` de todas as empresas e `6.02.*`/`6.03.*` só da lista acompanhada (`cvm.dfc_only_watchlist`); empresa nova na lista exige recarregar as DFP (`compute` com `reload_dfp`).
+
+## B3 — Ibovespa e IDIV (série diária de fechamento)
+
+Verificado em 08/10/2026 pelo GitHub Actions (sonda temporária, já removida). A página "Estatísticas históricas" de cada índice
+(`.../indice-ibovespa-ibovespa-estatisticas-historicas.htm`, `.../indice-dividendos-idiv-estatisticas-historicas.htm`) é um iframe de
+`https://sistemaswebb3-listados.b3.com.br/indexStatisticsPage/daily-evolution/{IBOVESPA|IDIV}`, cujo código chama:
+
+- `GET https://sistemaswebb3-listados.b3.com.br/indexStatisticsProxy/IndexCall/GetPortfolioDay/{base64}`, com `base64` do JSON
+  `{"index":"IBOVESPA","language":"pt-br","year":"2024"}` (sem espaços). `IBOV` também funciona; para o IDIV, `IDIV`.
+- Resposta JSON: `min` e `max` (por mês) e `results`: 31 linhas, `day` de 1 a 31, com `rateValue1` a `rateValue12` (o mês).
+  Valor = fechamento em pontos, texto brasileiro (`"128.481,02"`), ou `null` (sem pregão; também dias que não existem no mês).
+  Conferido: IBOVESPA com 246–249 pregões por ano de 2005 a 2013, 2023, 2026 (192 em 2026 até 07/10); IDIV 2011 em diante com a série
+  completa (2005 só tem 1 valor: o índice nasce no fim de 2005).
+- O mesmo endpoint com `GetDownloadPortfolioDay` devolve o CSV (`Dia;Jan;Fev;...`) em base64; o JSON é mais simples.
+- Os chamados `GetMonthlyEvolution` e `GetYearlyVariation` voltaram vazios para 2024 (não usados).
+- Tipo: a B3 descreve o **IDIV B3 como índice de retorno total** (há também o IDIV Price Return); a página do Ibovespa não trouxe a
+  expressão "retorno total" no texto verificado, então a conferência do tratamento de proventos do Ibovespa fica a cargo do usuário.
+- `GetPortfolioDay` do `indexProxy` (outro serviço) devolve só a carteira teórica do dia; não serve para histórico.
+
+## Banco Central — CDI (SGS)
+
+Verificado em 08/10/2026 (Actions): `https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=dd/mm/aaaa&dataFinal=dd/mm/aaaa`.
+
+- Série 12 = CDI diário, **% ao dia** (ex.: 02/01/2012 = `"0.041028"`; 02/01/2024 = `0,043739` no CSV). JSON: `[{"data":"02/01/2012","valor":"0.041028"}, ...]`.
+- Séries diárias aceitam no máximo **10 anos** por consulta (HTTP 406 acima disso, com mensagem em JSON): o pipeline consulta em janelas de 9 anos.
+- A série 4389 (CDI anualizado base 252) responde `13.65` em outubro/2026; a 4391 é o CDI mensal; a 11 (Selic) rejeitou a chamada sem datas
+  ("Requisição inválida"). A série 7 (Ibovespa no SGS) parou em 30/09/2019, por isso o Ibovespa vem da B3.
+- Houve um 502 transitório na primeira chamada (a repetição respondeu); `http.fetch` já repete com espera.
+
+## B3 — tarifas do mercado à vista (custos do backtest)
+
+Verificado em 08/10/2026 no documento oficial "Tarifação de Produtos de Renda Variável" (v3.0, 42 páginas) e na página de tarifas da B3:
+operações regulares (não day trade) no mercado à vista de ações, por investidor, pelo ADTV mensal: **até R$ 3 milhões de ADTV** — negociação
+0,00500% + CCP 0,02240% + transferência de ativos (TTA) 0,0026% = **0,0300%** sobre o valor de cada ordem (comprador e vendedor);
+acima de R$ 3 milhões, 0,0225%. Operações em leilão: negociação 0,0070%. O documento traz só a tabela vigente; o histórico de 2012 a 2025
+(emolumentos eram outros) **não foi verificado**: o backtest usa 0,03% em todo o período (`backtest.b3_fee_schedule` aceita datas de
+vigência para refinar). Corretagem zero, pela decisão do usuário.
+
+## Tributação de ações (fontes secundárias; conferir na Receita)
+
+Não foi possível abrir o site da Receita Federal desta sessão; as regras abaixo vêm de portais que citam a Lei 11.033/2004 e são as usadas
+no backtest, como parâmetros: swing trade em ações paga **15%** sobre o ganho líquido do mês; vendas totais do mês **até R$ 20 mil**
+(todas as corretoras) ficam isentas, de forma "tudo ou nada"; prejuízos compensam ganhos futuros do mesmo tipo (sem prazo), mas não
+reduzem ganho que já seria isento; DARF até o último dia útil do mês seguinte. Dividendos: isentos (alíquota 0, `tax.dividend`); JCP: 15%
+retidos na fonte (`tax.jcp`). Não modelado: IRRF "dedo-duro" de 0,005% sobre as vendas (compensável) e a retenção de 10% sobre dividendos
+acima de R$ 50 mil por mês por pagador, que não se aplica a uma carteira deste tamanho.

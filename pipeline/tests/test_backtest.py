@@ -373,3 +373,14 @@ def test_payments_adjusted_for_split_between_exercise_end_and_payment():
     pays = pays_for(100, D(0), D(100), date(2021, 3, 1), events=[(date(2021, 2, 1), D(2))],
                     timing="filing")  # fmt: skip
     assert pays[0].dividend == D("0.5")  # 100 / (100 ações x 2)
+
+
+def test_sector_cap_is_shared_by_companies_of_the_same_sector():
+    # 4 setores (limite de 30% vale). Dois candidatos do setor 'e' dividem o espaço do setor.
+    held = {1: D(2000), 2: D(2000), 3: D(2000)}
+    sectors = {1: "f", 2: "g", 3: "h"}
+    buys = [cand(4, "AAAA3", "0.2", sector="e"), cand(5, "BBBB3", "0.3", sector="e")]
+    out = bt.allocate(D(1000), buys, held, sectors, params(stock_cap=D("0.50")))
+    total = D(7000)
+    assert sum(a.amount for a in out) <= total * D("0.30")
+    assert sum(a.amount for a in out) > 0
