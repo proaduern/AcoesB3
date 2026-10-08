@@ -41,8 +41,11 @@ for url in (
             subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pypdf"], check=True)
             from pypdf import PdfReader
             rd = PdfReader(io.BytesIO(r.content))
+            print("páginas:", len(rd.pages))
             for i, p in enumerate(rd.pages):
-                print(f"--- pág {i + 1}")
-                print((p.extract_text() or "")[:3500])
+                txt = p.extract_text() or ""
+                if i < 3 or re.search(r"(?i)vigência|a vista|à vista|demais investidores|pessoa física", txt) and "%" in txt and i < 30:
+                    print(f"--- pág {i + 1}")
+                    print(txt[:2600])
         except Exception as e:  # noqa: BLE001
             print("erro pdf", e)
