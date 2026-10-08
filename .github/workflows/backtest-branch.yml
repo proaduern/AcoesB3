@@ -1,0 +1,39 @@
+name: backtest-branch
+# Temporário (fase 4): enquanto backtest.yml não está na branch padrão (o GitHub só aceita
+# workflow_dispatch para workflows que existem lá), roda as etapas pedidas em
+# .github/backtest-request.txt (uma por linha: benchmarks, run, report). Remover depois do merge.
+on:
+  push:
+    branches: [claude/charming-thompson-heh40k]
+    paths: [.github/backtest-request.txt, .github/workflows/backtest-branch.yml]
+concurrency:
+  group: neon-writer
+  cancel-in-progress: false
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: pipeline
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Etapas pedidas
+        run: |
+          test -n "$NEON_DATABASE_URL" || { echo "::error::segredo NEON_DATABASE_URL vazio"; exit 1; }
+          while IFS= read -r line; do
+            case "$line" in
+              benchmarks) acoesb3 backtest benchmarks ;;
+              run) acoesb3 backtest run ;;
+              report) acoesb3 backtest report --warnings ;;
+              ""|\#*) ;;
+              *) echo "::error::etapa não permitida: $line"; exit 1 ;;
+            esac
+          done < ../.github/backtest-request.txt
+      - run: acoesb3 size
