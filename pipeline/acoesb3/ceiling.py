@@ -404,6 +404,13 @@ def dcf(
     inputs |= {"base": str(base), "base_years": list(base_keys)}
     if base <= 0:
         return _unavailable("dcf", "FCFE médio não positivo", **inputs)
+    if years[last].shares:
+        # Divisor por ação (value / shares / shares_factor): permite ao simulador da tela refazer o
+        # DCF com outros parâmetros a partir dos insumos gravados, sem reler as demonstrações.
+        inputs |= {
+            "shares": str(years[last].shares),
+            "shares_factor": str(years[last].shares_factor),
+        }
     if growth_override is not None:
         g = growth_override
         inputs["growth_source"] = "informado para a empresa"

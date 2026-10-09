@@ -1,9 +1,9 @@
 name: pipeline-ci
 on:
   push:
-    paths: ["pipeline/**", ".github/workflows/pipeline-ci.yml"]
+    paths: ["pipeline/**", "web/tests/parity/**", ".github/workflows/pipeline-ci.yml"]
   pull_request:
-    paths: ["pipeline/**", ".github/workflows/pipeline-ci.yml"]
+    paths: ["pipeline/**", "web/tests/parity/**", ".github/workflows/pipeline-ci.yml"]
 jobs:
   test:
     runs-on: ubuntu-latest

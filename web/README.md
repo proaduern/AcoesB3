@@ -14,3 +14,9 @@ npm run dev
 
 Segredos só na Vercel (nunca no código): `NEON_DATABASE_URL_POOLED`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
 `ALLOWED_EMAILS`, `AUTH_SECRET`. Projeto da Vercel com Root Directory `web`.
+
+## Simulador do preço teto
+
+`src/lib/ceiling/` refaz o preço teto com outros parâmetros a partir dos insumos gravados no banco. A paridade com
+`pipeline/acoesb3/ceiling.py` é testada contra `tests/parity/cases.json`, gerado pelo Python
+(`acoesb3 ceilings parity-export`). Mudou uma regra em `ceiling.py`: ajuste o simulador e regere o fixture no mesmo commit.

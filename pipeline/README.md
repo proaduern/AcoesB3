@@ -34,6 +34,7 @@ acoesb3 review event-add --ticker ABCD3 --date 2022-06-01 --factor 1.1
 acoesb3 review dividend --cvm 5410 --date 2024-12-31 --jcp 0 --dividends 1000000 --source manual
 acoesb3 review class --cvm 5410 [--sector "..."] [--plan comum|banco|seguradora]
 acoesb3 review ticker --root ABCD --cvm 1234
+acoesb3 ceilings parity-export   # gera web/tests/parity/cases.json (simulador da tela; não usa o banco)
 acoesb3 backtest benchmarks    # fase 4: Ibovespa e IDIV (B3) e CDI (Banco Central)
 acoesb3 backtest run [--scenario aporte_1000]   # ajuste até validation_start - 1 (não toca a validação)
 acoesb3 backtest report [--warnings]            # resultados gravados

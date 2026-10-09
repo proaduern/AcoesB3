@@ -18,10 +18,11 @@ import logging
 import sys
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from . import backtest_run, compute, load, review, watch
+from . import backtest_run, compute, load, parity, review, watch
 from .db import connect, get_config, migrate
 
 log = logging.getLogger("acoesb3")
@@ -416,6 +417,11 @@ def main(argv: list[str] | None = None) -> int:
     x = cs.add_parser("list", help="último preço teto calculado, com métodos e papéis")
     x.add_argument("--cvm", type=int, action="append", help="só estas empresas")
     x.add_argument("--dcf", action="store_true", help="detalha o FCFE por exercício e por conta")
+    x = cs.add_parser(
+        "parity-export",
+        help="gera o fixture de paridade do simulador da tela (sem banco)",
+    )
+    x.add_argument("--out", type=Path, default=parity.DEFAULT_PATH)
     bk = sub.add_parser("backtest", help="backtest, comparação e validação (fase 4)")
     bs = bk.add_subparsers(dest="backtest_cmd", required=True)
     bs.add_parser("benchmarks", help="coleta Ibovespa e IDIV (B3) e CDI (Banco Central)")
@@ -495,6 +501,13 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--cvm", type=int, required=True)
     x.add_argument("--note")
     a = p.parse_args(argv)
+
+    if a.cmd == "ceilings" and a.ceilings_cmd == "parity-export":
+        n = parity.export(
+            a.out
+        )  # não usa o banco: roda no CI e na máquina de quem altera o ceiling.py
+        print(f"{n} casos de paridade gravados em {a.out}")
+        return 0
 
     with connect() as conn:
         applied = migrate(conn)
