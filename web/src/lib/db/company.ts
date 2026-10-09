@@ -11,6 +11,9 @@ import type {
   YearSeries,
 } from "@/lib/company";
 import { pickTicker } from "@/lib/company";
+import { CONFIG_KEYS } from "@/lib/ceiling/params";
+import type { MethodName, StoredClass, StoredMethod } from "@/lib/ceiling/types";
+import type { SimulatorData } from "@/lib/ceiling/view";
 import type { CriterionRow } from "@/lib/screen";
 import { readOnly } from "./readonly";
 import { int, iso, str, toClassRow } from "./watchlist";
@@ -302,6 +305,68 @@ export async function loadOriginTab(db: Db, cvm: number, tickers: string[]): Pro
         note: str(d.override_note),
         collectedAt: iso(d.collected_at),
       })),
+    };
+  });
+}
+
+/**
+ * Insumos gravados do último cálculo e os parâmetros que o pipeline usou, para o simulador. Nulo
+ * quando a empresa não tem preço teto calculado.
+ */
+export async function loadSimulatorData(db: Db, cvm: number): Promise<SimulatorData | null> {
+  return readOnly(db, async (c) => {
+    const asOf = str((await c.query(`SELECT ${LATEST_CEILING} AS as_of`)).rows[0]?.as_of);
+    if (!asOf) return null;
+    const res = await c.query(
+      `SELECT status, ceiling, methods_ok, k_required, plan, data_base, collected_at
+       FROM ceiling_result WHERE cvm_code = $1 AND as_of = $2::date`,
+      [cvm, asOf],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    const methods = await c.query(
+      `SELECT method, status, value, reason, inputs FROM ceiling_method WHERE cvm_code = $1 AND as_of = $2::date`,
+      [cvm, asOf],
+    );
+    const classes = await c.query(
+      `SELECT ticker, kind, multiplier, price, price_date, ceiling, ratio, band, votes, k_required, buy, reason
+       FROM ceiling_class WHERE cvm_code = $1 AND as_of = $2::date ORDER BY ticker`,
+      [cvm, asOf],
+    );
+    const cfgRows = await c.query("SELECT key, value FROM app_config WHERE key = ANY($1::text[])", [[...CONFIG_KEYS]]);
+    const config: Record<string, unknown> = {};
+    for (const row of cfgRows.rows) config[row.key as string] = row.value;
+    for (const key of CONFIG_KEYS) {
+      if (!(key in config)) throw new Error(`parâmetro ausente em app_config: ${key}`);
+    }
+    const storedMethods: StoredMethod[] = methods.rows.map((m) => ({
+      method: m.method as MethodName,
+      status: m.status,
+      value: str(m.value),
+      reason: str(m.reason),
+      inputs: (m.inputs ?? {}) as Record<string, unknown>,
+    }));
+    const storedClasses: StoredClass[] = classes.rows.map((k) => ({
+      ticker: k.ticker,
+      kind: k.kind,
+      multiplier: int(k.multiplier),
+      price: k.price,
+      reason: str(k.reason),
+    }));
+    return {
+      asOf,
+      dataBase: str(r.data_base),
+      collectedAt: iso(r.collected_at),
+      plan: str(r.plan),
+      config,
+      company: { plan: str(r.plan), methods: storedMethods, classes: storedClasses },
+      stored: {
+        status: r.status,
+        ceiling: str(r.ceiling),
+        methodsOk: r.methods_ok,
+        kRequired: int(r.k_required),
+        classes: classes.rows.map(toClassRow),
+      },
     };
   });
 }

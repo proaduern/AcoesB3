@@ -63,3 +63,23 @@ code { font-size: 0.78rem; background: #f0f0f0; padding: 0.1rem 0.3rem; border-r
 .tablewrap > table { min-width: 640px; }
 td.nowrap { white-space: nowrap; }
 .viz.wide .viz-tick { font-size: 12px; }
+
+/* Simulador */
+.sim .notice { background: #fff8e1; border: 1px solid #f0d98a; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.85rem; margin: 0 0 1rem; }
+.sim-grid { display: grid; grid-template-columns: minmax(250px, 310px) 1fr; gap: 1.5rem; align-items: start; }
+@media (max-width: 800px) { .sim-grid { grid-template-columns: 1fr; } }
+.sim-form fieldset { border: 1px solid #ddd; border-radius: 4px; margin: 0 0 0.75rem; padding: 0.4rem 0.75rem 0.6rem; background: #fff; }
+.sim-form legend { font-weight: 600; font-size: 0.85rem; padding: 0 0.3rem; }
+.field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.5rem; margin-top: 0.45rem; font-size: 0.85rem; }
+.field > label { flex: 1 1 11rem; }
+.field .sub { flex-basis: 100%; }
+.inputwrap { display: inline-flex; align-items: center; gap: 0.25rem; }
+.sim input:not([type="checkbox"]) { font: inherit; width: 5.5rem; padding: 0.25rem 0.4rem; text-align: right; border: 1px solid #bbb; border-radius: 3px; }
+.sim input.price { width: 6rem; }
+.sim input[aria-invalid="true"] { border-color: #b3261e; }
+.tag { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 999px; background: #1a1a1a; color: #fff; font-size: 0.7rem; vertical-align: middle; }
+.field.changed input { border-color: #1a1a1a; border-width: 2px; }
+.errors { border: 1px solid #b3261e; background: #fdecea; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.85rem; margin-bottom: 1rem; }
+.errors ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+.headline { margin: 0 0 0.25rem; }
+.sim-out h3 { margin: 1.25rem 0 0.4rem; }

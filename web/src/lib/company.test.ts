@@ -15,6 +15,7 @@ describe("parâmetros da URL", () => {
     expect(parseTab({})).toBe("teto");
     expect(parseTab({ aba: "xis" })).toBe("teto");
     expect(parseTab({ aba: "origem" })).toBe("origem");
+    expect(parseTab({ aba: "simulador" })).toBe("simulador");
     expect(parseTab({ aba: ["filtro"] })).toBe("teto");
     expect(parsePeriod({})).toBe(5);
     expect(parsePeriod({ periodo: "3" })).toBe(3);

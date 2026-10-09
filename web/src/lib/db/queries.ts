@@ -4,6 +4,7 @@ import { type DataFreshness, loadDataFreshness } from "./core";
 import { getPool } from "./pool";
 import * as company from "./company";
 import type { CeilingTab, CompanyHeader, FilterTab, OriginTab, Period, PriceTab } from "@/lib/company";
+import type { SimulatorData } from "@/lib/ceiling/view";
 import { loadPending, loadScreen, type Pending, type ScreenPage } from "./screen";
 import { loadWatchlist } from "./watchlist";
 import type { ScreenFilters } from "@/lib/screen";
@@ -60,4 +61,9 @@ export async function getPriceTab(
 export async function getOriginTab(cvm: number, tickers: string[]): Promise<OriginTab> {
   await requireUser();
   return company.loadOriginTab(getPool(), cvm, tickers);
+}
+
+export async function getSimulatorData(cvm: number): Promise<SimulatorData | null> {
+  await requireUser();
+  return company.loadSimulatorData(getPool(), cvm);
 }

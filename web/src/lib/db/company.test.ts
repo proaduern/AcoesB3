@@ -8,7 +8,10 @@ import {
   loadFilterTab,
   loadOriginTab,
   loadPriceTab,
+  loadSimulatorData,
 } from "./company";
+import { CONFIG_KEYS, paramsFromConfig } from "@/lib/ceiling/params";
+import { computeView, initialState } from "@/lib/ceiling/view";
 import { createPool } from "./pool";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -211,5 +214,62 @@ describe.skipIf(!url)("ficha da empresa (Postgres de teste)", () => {
     ]);
     expect(o.dividends[0]!.note).toBe("RI da empresa");
     expect(o.dividends[0]!.collectedAt).toBe("2026-10-01T10:00:00.000Z");
+  });
+
+  it("simulador: insumos do último cálculo, papéis com multiplicador e os parâmetros das migrações", async () => {
+    const d = await loadSimulatorData(pool, 1);
+    expect(d).not.toBeNull();
+    expect(d).toMatchObject({ asOf: "2026-10-05", dataBase: "2025-12-31", plan: "comum", collectedAt: "2026-10-04T23:30:00.000Z" });
+    expect(d!.stored).toMatchObject({ status: "ok", ceiling: "11.00000000", methodsOk: 3, kRequired: 2 });
+    expect(d!.company.methods.map((m) => m.method).sort()).toEqual(["bazin", "dcf", "graham"]); // só o último cálculo
+    expect(d!.company.methods.find((m) => m.method === "bazin")!.inputs).toMatchObject({ mean: "0.60", rate: "0.06" });
+    expect(d!.company.classes).toEqual([
+      { ticker: "ALFA3", kind: "on", multiplier: 1, price: "9.900000", reason: null },
+      { ticker: "ALFA4", kind: "pn", multiplier: 1, price: "9.000000", reason: null },
+    ]);
+    expect(d!.stored.classes.map((k) => [k.ticker, k.buy, k.band])).toEqual([["ALFA3", true, "buy"], ["ALFA4", true, "buy"]]);
+    // todos os parâmetros do simulador existem em app_config (nomes iguais aos das migrações)
+    for (const k of CONFIG_KEYS) expect(k in d!.config, k).toBe(true);
+    const p = paramsFromConfig(d!.config);
+    expect(p.bazinRate.toString()).toBe("0.06");
+    expect(p.kByMethods).toEqual({ 3: 2, 4: 3, 5: 3 });
+    expect(p.dcfEnabled).toBe(true);
+  });
+
+  it("simulador: com dados consistentes do banco (8 casas) e sem alterar nada, nada aparece como alterado", async () => {
+    await pool.query(`INSERT INTO company (cvm_code, cnpj, name, source) VALUES (3, '3', 'GAMA CONSISTENTE', 'cvm_cad')`);
+    await pool.query(`INSERT INTO watchlist (cvm_code, role, segment) VALUES (3, 'carteira', 'energia')`);
+    // Bazin 0,60 / 0,06 = 10; Gordon 0,6 x 1,05 / (0,12 - 0,05) = 9; Graham = raiz(22,5 x 2 x 8); mediana = 10
+    await pool.query(`
+      INSERT INTO ceiling_result (as_of, cvm_code, status, methods_ok, k_required, ceiling, plan, data_base)
+      VALUES ('2026-10-05', 3, 'ok', 3, 2, 10, 'comum', '2025-12-31')`);
+    await pool.query(`
+      INSERT INTO ceiling_method (as_of, cvm_code, method, status, value, inputs, source) VALUES
+        ('2026-10-05', 3, 'bazin', 'ok', 10, '{"mean": "0.6", "rate": "0.06"}', 'CVM'),
+        ('2026-10-05', 3, 'gordon', 'ok', 9, '{"mean": "0.6", "g_raw": "0.0941"}', 'CVM'),
+        ('2026-10-05', 3, 'graham', 'ok', 18.97366596, '{"lpa_mean": "2", "vpa": "8"}', 'CVM')`);
+    await pool.query(`
+      INSERT INTO ceiling_class (as_of, cvm_code, ticker, kind, multiplier, price, price_date, ceiling, ratio, band, votes, k_required, buy)
+      VALUES ('2026-10-05', 3, 'GAMA3', 'on', 1, 8, '2026-10-02', 10, 0.8, 'buy', 3, 2, true),
+             ('2026-10-05', 3, 'GAMA11', 'unit', 3, 31.5, '2026-10-02', 30, 1.05, 'hold', 0, 2, false)`);
+
+    const d = (await loadSimulatorData(pool, 3))!;
+    expect(d.company.classes.map((k) => k.multiplier)).toEqual([3, 1]); // ordenados por ticker: GAMA11, GAMA3
+    const v = computeView(d, initialState(d));
+    expect(v.errors).toEqual([]);
+    expect(v.changed).toBe(false);
+    expect(v.consolidated!.ceiling!.toString()).toBe("10");
+
+    // e ao alterar a taxa do Bazin para 8%, a compra do GAMA3 muda de verdade
+    const s = initialState(d);
+    const changed = computeView(d, { ...s, fields: { ...s.fields, bazin_rate: "12" } });
+    expect(changed.changed).toBe(true);
+    expect(changed.methods.find((m) => m.method === "bazin")!.sim.value!.toString()).toBe("5");
+  });
+
+  it("simulador: empresa sem cálculo = nulo; parâmetro ausente em app_config = erro explícito", async () => {
+    expect(await loadSimulatorData(pool, 2)).toBeNull();
+    await pool.query("DELETE FROM app_config WHERE key = 'ceiling.gordon_k'");
+    await expect(loadSimulatorData(pool, 1)).rejects.toThrow(/ceiling.gordon_k/);
   });
 });

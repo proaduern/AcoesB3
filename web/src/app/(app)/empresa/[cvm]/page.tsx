@@ -4,6 +4,7 @@ import { CeilingSection } from "@/components/company/CeilingSection";
 import { FilterSection } from "@/components/company/FilterSection";
 import { OriginSection } from "@/components/company/OriginSection";
 import { PriceSection } from "@/components/company/PriceSection";
+import { Simulator } from "@/components/company/Simulator";
 import {
   TABS,
   TAB_LABEL,
@@ -26,7 +27,9 @@ import {
   getFilterTab,
   getOriginTab,
   getPriceTab,
+  getSimulatorData,
 } from "@/lib/db/queries";
+import type { SimulatorData } from "@/lib/ceiling/view";
 import { ROLE_LABEL } from "@/lib/watchlist";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +44,7 @@ async function header(cvm: number): Promise<CompanyHeader | null | "error"> {
 
 type TabData =
   | { tab: "teto"; d: CeilingTab }
+  | { tab: "simulador"; d: SimulatorData | null }
   | { tab: "filtro"; d: FilterTab }
   | { tab: "preco"; d: PriceTab }
   | { tab: "origem"; d: OriginTab };
@@ -55,6 +59,7 @@ async function loadTab(
 ): Promise<TabData | null> {
   try {
     if (tab === "teto") return { tab, d: await getCeilingTab(cvm) };
+    if (tab === "simulador") return { tab, d: await getSimulatorData(cvm) };
     if (tab === "filtro") return { tab, d: await getFilterTab(cvm) };
     if (tab === "preco") return { tab, d: await getPriceTab(cvm, h.tickers, wanted, period) };
     return { tab, d: await getOriginTab(cvm, h.tickers) };
@@ -92,6 +97,12 @@ export default async function CompanyPage({
   let body: React.ReactNode;
   if (!data) body = <p>Dados indisponíveis: não foi possível ler o banco agora.</p>;
   else if (data.tab === "teto") body = <CeilingSection tab={data.d} />;
+  else if (data.tab === "simulador")
+    body = data.d ? (
+      <Simulator data={data.d} />
+    ) : (
+      <p>Sem preço teto calculado para esta empresa: rode `acoesb3 compute --step ceilings`.</p>
+    );
   else if (data.tab === "filtro") body = <FilterSection tab={data.d} />;
   else if (data.tab === "preco") body = <PriceSection cvm={cvm} period={period} tab={data.d} />;
   else body = <OriginSection tab={data.d} />;

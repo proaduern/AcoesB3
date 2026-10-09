@@ -9,10 +9,11 @@ import {
 import type { ClassRow, Role } from "./watchlist";
 import type { CriterionRow } from "./screen";
 
-export const TABS = ["teto", "filtro", "preco", "origem"] as const;
+export const TABS = ["teto", "simulador", "filtro", "preco", "origem"] as const;
 export type Tab = (typeof TABS)[number];
 export const TAB_LABEL: Record<Tab, string> = {
   teto: "Preço teto",
+  simulador: "Simulador",
   filtro: "Filtro",
   preco: "Preço",
   origem: "Origem dos dados",

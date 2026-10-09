@@ -80,6 +80,7 @@ const mocks = vi.hoisted(() => ({
   getFilterTab: vi.fn(),
   getPriceTab: vi.fn(),
   getOriginTab: vi.fn(),
+  getSimulatorData: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
   }),
@@ -111,7 +112,7 @@ describe("ficha da empresa", () => {
     const html = await render("1");
     expect(html).toContain("ALFA ENERGIA S.A.");
     expect(html).toContain("Papéis: ALFA3, ALFA4");
-    for (const t of ["Preço teto", "Filtro", "Preço", "Origem dos dados"]) expect(html).toContain(t);
+    for (const t of ["Preço teto", "Simulador", "Filtro", "Preço", "Origem dos dados"]) expect(html).toContain(t);
     expect(html).toContain('aria-current="page"');
   });
 
@@ -171,6 +172,17 @@ describe("ficha da empresa", () => {
     expect(html).toContain("data de aprovação (não a de efeito)");
     expect(html).toContain("suspeito, aguarda revisão");
     expect(html).toContain("lançado à mão: RI da empresa");
+  });
+
+  it("aba Simulador: renderiza o simulador com os dados gravados; sem teto calculado, avisa", async () => {
+    const { dataFor } = await import("../../../../../tests/helpers/simulatorData");
+    mocks.getSimulatorData.mockResolvedValue(dataFor("comum_completo"));
+    const html = await render("1", { aba: "simulador" });
+    expect(mocks.getSimulatorData).toHaveBeenCalledWith(1);
+    expect(html).toContain("Parâmetros da simulação");
+    expect(html).toContain("idêntico ao gravado");
+    mocks.getSimulatorData.mockResolvedValue(null);
+    expect(await render("1", { aba: "simulador" })).toContain("Sem preço teto calculado");
   });
 
   it("empresa fora da lista ou código inválido = não encontrada", async () => {
