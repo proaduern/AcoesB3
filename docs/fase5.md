@@ -1,8 +1,9 @@
-# Fase 5 — Tela Next.js, login Google, filtro, ficha da empresa e simulador (roteiro)
+# Fase 5 — Tela Next.js, login Google, filtro, ficha da empresa e simulador
 
-**Estado (08/10/2026)**: decisões tomadas com o usuário; etapas 5.0 (esqueleto) e 5.1 (login) feitas no código; o login real ainda não foi conferido na Vercel. Este documento é o roteiro; as regras
-ficam na seção 9.1 da especificação. A tela **só lê** resultados prontos do Neon; a única lógica de cálculo em TypeScript
-é o simulador, com teste de paridade contra `pipeline/acoesb3/ceiling.py`.
+**Estado (09/10/2026): concluída no código; falta a primeira publicação na Vercel e as conferências com dados reais** (lista
+abaixo). 439 testes no `web/` e 338 no `pipeline/`, lint e build limpos, CI verde no GitHub em todas as etapas
+(`web-ci` de 5.0 a 5.8, `pipeline-ci` na 5.6). Regras decididas: seção 9.1 da especificação. A tela **só lê** o Neon; a
+única lógica de cálculo em TypeScript é o simulador do preço teto, com teste de paridade contra `pipeline/acoesb3/ceiling.py`.
 
 ## Decisões do usuário (08/10/2026)
 
@@ -16,96 +17,53 @@ ficam na seção 9.1 da especificação. A tela **só lê** resultados prontos d
 | Login | Auth.js com Google + `ALLOWED_EMAILS`. Segredo novo: `AUTH_SECRET`. |
 | Repositório e deploy | `web/` na raiz; projeto da Vercel com Root Directory `web`; produção pela branch padrão, preview por PR. |
 
-## Escopo por tela
+## O que existe
 
-Toda tela mostra, em cada dado, **fonte, data-base e data de coleta**; dado ausente aparece como "indisponível", nunca
-como zero ou valor antigo (seção 10).
-
-1. **Lista acompanhada** (`watchlist` + `ceiling_class` + `ceiling_result` + `screen_result`): por papel, preço e data do
-   fechamento, teto, razão preço ÷ teto, faixa (`strong_buy`, `buy`, `hold`, `expensive`), votos/K, `buy`, papel de carteira ou
-   radar e segmento. `insufficient` aparece como "dados insuficientes" (visível, nunca compra). Filtro por segmento e por papel.
-2. **Filtro** (`screen_result` + `screen_criterion`, B3 inteira): status do retrato, critério reprovado/indisponível com valor e
-   limite, busca e filtro por status (`approved`, `rejected`, `insufficient_history`, `insufficient_data`, `stale`, `not_listed`,
-   `excluded`). Botão para ver a ficha só para empresas da lista; para as demais, a linha mostra os critérios e a indicação de
-   que ela não está na lista (`acoesb3 watch add`). Lista de pendências (outliers e eventos suspeitos) com o comando a rodar.
-3. **Ficha da empresa**, abas:
-   - *Preço teto*: os 5 métodos (`ceiling_method`: valor, status, motivo, `inputs` expansível), mediana, K, votos, faixa por papel.
-   - *Filtro*: critérios, histórico anual de lucro, ROE, DPS, DY, payout (`indicator_annual`, `dividend_outlier`, `outlier_review`),
-     outliers em destaque.
-   - *Preço*: fechamento (`quote_daily`) com a linha do teto.
-   - *Origem*: eventos societários (`corporate_event`), plano de contas, setor e reclassificação (`company_class_override`),
-     proventos lançados à mão (`dividend_override`), fonte de cada ano.
-   - *Simulador*: ver abaixo.
-4. **Backtest** (`backtest_run`, `backtest_series`, `backtest_freeze`, `backtest_trade`): cenários do ajuste (2012-01 a 2023-12)
-   lado a lado; a **validação** (execução única, 2024-01-01 a 2025-12-31) em bloco separado com a nota "medida uma vez em
-   08/10/2026, sem reajuste"; gráfico mensal da estratégia líquida e bruta contra Ibovespa, IDIV e CDI; métricas, janelas de
-   5 anos perdidas, queda máxima e o estado do critério de morte; ordens por cenário. O aviso de viés cobre todo o bloco:
-   faixa fixa no topo (texto de `backtest_run.warnings` / `universe.survivorship_warning`) e selo ao lado de cada retorno e
-   do gráfico. As pendências da fase 4 (proventos, fim do período, tarifas) aparecem como notas, sem esconder o limite.
-
-## Simulador (TypeScript) e paridade
-
-**O que recalcula**: dado o papel, o usuário altera o preço e os parâmetros `ceiling.*` (taxa Bazin, multiplicador de Graham,
-k, g mínimo/máximo e spread do Gordon, taxa, anos, crescimento e perpetuidade do DCF, K por quantidade de métodos, faixas). O
-TS refaz os métodos, a mediana, os votos, a faixa e `buy`, usando como entrada os insumos anuais já gravados em
-`ceiling_method.inputs` (`dps_net`, `growth.first/last`, `lpa_mean`, `vpa`, `ratios`, `fcfe`, `base`) e `ceiling_class.multiplier`.
-Defaults vêm de `app_config`. Nada de DFP, FRE ou COTAHIST é lido nem recalculado.
-
-**Regra**: uma só implementação, em `web/src/lib/ceiling/`, espelhando `ceiling.py` função a função (`bazin`, `gordon`,
-`graham`, `multiples`, `dcf`, `consolidate`, `k_for`, `band_for`, `value_class`). Aritmética com `decimal.js` (precisão 28,
-como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em `sqrt` e potência fracionária.
-
-**Teste de paridade**:
-- `acoesb3 ceilings parity-export` gera `web/tests/parity/cases.json` a partir de `ceiling.py`: parâmetros, insumos, resultado
-  esperado de cada método e do consolidado. Cobre os casos com borda: método excluído e indisponível, `k − g` abaixo do mínimo,
-  LPA/VPA ≤ 0, banco/seguradora, menos de 3 métodos, K = 3 com 4 métodos, preço exatamente em 80%, 100% e 120%, unit com
-  multiplicador 3, ano de outlier fora da média e `ESCALA_MOEDA` (insumos em unidade e em mil, com a escala explícita).
-- O Vitest roda os mesmos casos no TS e compara com tolerância relativa de 1e-9 (e igualdade exata de status, faixa e `buy`).
-- No CI, o export é regerado e `git diff --exit-code web/tests/parity` falha se o Python mudou e o fixture não: as duas
-  implementações não divergem em silêncio.
-- Mudou uma regra em `ceiling.py`: mudar o TS e regerar o fixture no mesmo commit.
-
-## Login e acesso
-
-- Auth.js (NextAuth v5) com provedor Google, escopos `openid email profile`. O escopo `drive.file` fica para a fase 8.
-- `ALLOWED_EMAILS` (lista separada por vírgula, comparada em minúsculas) conferida no callback `signIn` **e** em todo acesso ao
-  banco no servidor (middleware não basta). E-mail fora da lista cai numa tela de recusa, sem dados.
-- Segredos só na Vercel: `NEON_DATABASE_URL_POOLED`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAILS` e o novo
-  `AUTH_SECRET`. `GOOGLE_REFRESH_TOKEN` não é usado nesta fase. Nada de credencial no código nem no chat.
-- O app do Google Cloud precisa estar publicado (não em modo teste), como na seção 9. Para só login, os escopos são básicos
-  e não pedem verificação.
-
-## Banco de leitura
-
-- Driver `@neondatabase/serverless` (ou `pg`) com `NEON_DATABASE_URL_POOLED`. Consultas só em componentes de servidor e em
-  `web/src/lib/db/queries.ts`; o navegador nunca recebe a URL.
-- **A confirmar com o usuário**: usar um papel do Neon só com `SELECT` para montar a URL do pooler. Assim "a tela só lê" fica
-  garantido pelo banco, não só pelo código. O papel é criado no console do Neon (senha não passa pelo chat) e a URL entra
-  na Vercel. Sem ele, a conexão usa o papel do pipeline.
-- Cada consulta devolve também `data_base`, `collected_at` e `computed_at`, para a tela mostrar a procedência.
-
-## Etapas
-
-| Etapa | Entrega | Teste / verificação |
+| Rota | O que mostra | Lê |
 |---|---|---|
-| 5.0 (feita) | Esqueleto `web/` (Next.js App Router, TypeScript estrito, ESLint, Vitest), `web-ci.yml` (lint, tipos, testes) em `web/**` | CI verde com página vazia |
-| 5.1 (código feito) | Login Google + `ALLOWED_EMAILS`, tela de recusa, layout com menu | Testes da função de autorização (lista, caixa, vazio); login real conferido pelo usuário na Vercel |
-| 5.2 (feita) | Camada de leitura do Neon, formatadores (R$, %, datas, "indisponível") e componente de procedência | Testes de formatação: nulo nunca vira 0; unidade vs mil explícita |
-| 5.3 (feita) | Lista acompanhada | Testes de consulta com banco de teste; conferência com `acoesb3 ceilings list` |
-| 5.4 (feita) | Filtro da B3 | Idem; contagem por status bate com o banco |
-| 5.5 (feita) | Ficha: preço teto, filtro, preço, origem | Valores da ficha conferidos contra `ceilings list --dcf` em 2 empresas |
-| 5.6 (feita) | Simulador TS + `parity-export` + CI de paridade | Paridade com tolerância 1e-9; diff do fixture no CI |
-| 5.7 (feita) | Aba do simulador na ficha | Com os parâmetros padrão, o resultado é idêntico ao gravado (`ceiling_class`) |
-| 5.8 (feita) | Tela do backtest com o aviso de viés | Teste que falha se a faixa ou o selo não renderizarem com `warnings` vazio ou não vazio; validação marcada como medida única |
-| 5.9 | Docs: `docs/fase5.md` atualizado, seção 9.1 da especificação, README do `web/`, "Fase atual" do CLAUDE.md | Revisão do usuário |
+| `/login`, `/acesso-negado`, `/api/auth/*` | Login Google; recusa de e-mail fora da lista | Google, `ALLOWED_EMAILS` |
+| `/` | Lista acompanhada: papel, preço, teto, razão, faixa, votos, situação, status do filtro; filtros por papel, segmento e "só compra" | `watchlist`, `ceiling_*`, `screen_result` |
+| `/filtro` | Filtro da B3: busca por nome ou ticker, status com contagem, critérios com valor e limite, paginação | `screen_result`, `screen_criterion`, `company_security` |
+| `/filtro/pendencias` | Proventos suspeitos, eventos suspeitos e DVA zerada, com o comando a rodar | `dividend_outlier`, `corporate_event`, `indicator_annual` |
+| `/empresa/[cvm]` | Ficha (só da lista): abas Preço teto, **Simulador**, Filtro, Preço e Origem dos dados | `ceiling_*`, `app_config`, `screen_*`, `quote_daily`, `company_event`... |
+| `/backtest` | Aviso de viés, validação, ajuste, gráfico, fluxos, avisos, universo e ordens | `backtest_*` |
 
-## Passos do usuário (fora do código)
+- **Leitura do banco**: driver `pg` com `NEON_DATABASE_URL_POOLED`; toda consulta passa por `src/lib/db/queries.ts` (`server-only`), que confere o usuário antes e roda em transação `READ ONLY` (escrita falha, testado). O navegador nunca recebe a URL.
+- **Login**: e-mail verificado pelo Google e presente em `ALLOWED_EMAILS` (lista vazia = ninguém entra), conferido no login, no `proxy.ts` e em cada consulta; tirar um e-mail da lista vale na próxima requisição.
+- **Procedência**: toda tela mostra fonte, data-base e data de coleta; dado ausente aparece como "indisponível", nunca como zero.
 
-1. Criar o projeto na Vercel apontando para este repositório, Root Directory `web`.
-2. Cadastrar na Vercel: `NEON_DATABASE_URL_POOLED`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAILS`, `AUTH_SECRET`
-   (gerado por você; eu não peço valores). URI de redirecionamento autorizada no cliente OAuth do Google:
-   `https://<dominio>/api/auth/callback/google`.
-3. (Opcional) Criar o papel de leitura no Neon.
+## Diferenças em relação ao roteiro de 08/10/2026
+
+| Roteiro | O que foi feito | Por quê |
+|---|---|---|
+| Papel do Neon só com `SELECT` (a confirmar) | **Não criado.** O "só lê" é garantido por transação `READ ONLY` | Depende de você criar o papel no console; continua recomendado como segunda camada |
+| Driver `@neondatabase/serverless` ou `pg` | `pg` | Funciona no pooler e no Postgres de teste do CI |
+| CI regera o fixture de paridade e falha com `git diff` | `test_parity.py` falha se o fixture versionado estiver defasado, e o `pipeline-ci` roda quando `web/tests/parity/**` muda | Mesmo efeito sem instalar o Python no `web-ci` |
+| Casos de `ESCALA_MOEDA` (unidade e mil) no fixture de paridade | **Não há**. Os insumos do simulador já são por ação ou em reais | A escala é resolvida no pipeline (`cvm.scale_value`); a tela é testada em `format.test.ts` (reais x mil, `toReais`, escala desconhecida é erro) |
+| Gráfico de preço com a linha do teto | Preço **sem ajuste por desdobramentos**; a linha só vale depois do último evento societário | O pipeline não grava série ajustada e refazê-la na tela seria um segundo cálculo (**a confirmar**) |
+| Aba do simulador por último | Logo depois de Preço teto | É a segunda coisa que se faz numa ficha |
+| Comparar a lista e a ficha com `ceilings list` na entrega | Fica para a primeira publicação | Sem acesso ao Neon real nesta sessão |
+| Aviso de viés "fixo" | Acompanha a rolagem só em telas largas | No celular a faixa ocupa ~160 px; ali valem os selos |
+
+## Primeira publicação (passos do usuário)
+
+1. Criar o projeto na Vercel apontando para este repositório, **Root Directory `web`**, produção na branch padrão do repositório (hoje `ccr-d11b7b9a-o4jy33`; confira o nome na Vercel).
+2. Cadastrar na Vercel: `NEON_DATABASE_URL_POOLED`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAILS` (separados por vírgula) e `AUTH_SECRET` (gere um valor aleatório, por exemplo `openssl rand -base64 32`). Nenhum valor passa pelo chat nem pelo código.
+3. No cliente OAuth do Google, autorizar `https://<dominio-de-producao>/api/auth/callback/google`; o app precisa estar publicado (não em modo de teste). Previews por PR têm URL própria e **não fazem login**, a menos que a URI delas também seja cadastrada.
+4. (Recomendado) Criar no console do Neon um papel só com `SELECT` e montar a URL do pooler com ele.
+5. Rodar o workflow `compute` com `step=ceilings`: o DCF passou a gravar o divisor por ação (`shares`, `shares_factor`) e, sem isso, o simulador mostra o DCF com o valor gravado.
+
+## Conferências na primeira publicação
+
+Nada abaixo foi conferido com dados reais; é o que falta para fechar a fase de verdade.
+
+1. **Login**: o e-mail da lista entra; outro e-mail cai em `/acesso-negado`; sem sessão, qualquer rota vai para `/login`.
+2. **Lista** (`/`) igual a `acoesb3 ceilings list`: preço, teto, razão, faixa, votos e compra de cada papel.
+3. **Ficha** de 2 empresas (uma comum, uma financeira) igual a `ceilings list --dcf`: valor e motivo de cada método.
+4. **Simulador**: sem alterar nada, cada empresa da lista abre "idêntico ao gravado" (depois do passo 5 acima). Se alguma divergir, é falha de paridade ou insumo faltando: anotar a empresa e o método.
+5. **Filtro**: contagem por status igual à do `compute`; pendências iguais a `review list`.
+6. **Backtest**: a validação de 08/10/2026 (`dy_5`) igual a `docs/fase4.md`: estratégia líquida 33,2% no período, 15,4% ao ano, queda máxima 14,7%; IDIV 26,6%, 12,5% e 10,6%; 2 de 24 janelas perdidas; queda 4,1 p.p. pior; critério de morte não acionado. Ajuste `dy_5`: 14,2% ao ano, queda 33,1%, 6 de 83 janelas.
+7. **Celular**: a lista, a ficha, o simulador e o backtest sem rolagem horizontal da página.
 
 ## O que fica de fora, e por quê
 
@@ -113,21 +71,34 @@ como o `Decimal` do Python), nunca `number`, para a paridade valer inclusive em 
 |---|---|
 | Revisão de outliers/eventos pela tela | Decisão de 08/10/2026: tela somente leitura; vira fase própria com credencial de escrita |
 | Disparo de recálculo pela tela (workflow `compute`) | Idem: exige token do GitHub na Vercel |
-| Simulador com troca de insumos (LPA, VPA, dividendo, FCFE) | Decisão de 08/10/2026; exigiria espelhar mais regras e testes |
+| Simulador com troca de insumos (LPA, VPA, dividendo, FCFE) e das janelas/alíquotas | Decisão de 08/10/2026; exigiria os dados brutos e mais regras espelhadas |
+| Preço ajustado por desdobramentos no gráfico | Sem série ajustada no pipeline (ver diferenças) |
 | Cotação intradiária | Decisão da fase 3 (preço = último fechamento); brapi/Yahoo seguem sem uso |
 | Carteira, lançamentos, extrato B3, alocação e alertas | Fases 6 e 7 |
 | Releases em PDF e escopo `drive.file` | Fase 8 |
-| Simular um novo backtest na tela | O backtest é feito no pipeline; a validação só pode ser medida uma vez |
-| Pendências de revisão das fases 2 e 3 (`docs/fase3.md`) | Dependem do usuário; a tela só as expõe como "pendente" |
+| Novo backtest ou nova validação pela tela | O backtest é do pipeline; a validação só pode ser medida uma vez |
+| Tema escuro | O app inteiro é claro; os gráficos têm só a paleta clara |
+| Pendências de revisão das fases 2 e 3 (`docs/fase3.md`) | Dependem do usuário; a tela só as expõe |
 
-## Riscos que a fase precisa fechar
+## Limites conhecidos
 
-- **Paridade só vale para o que está no `inputs`**: se algum insumo necessário não estiver gravado, a etapa 5.6 pode exigir uma
-  migração nova em `ceiling_method.inputs`. Verificar primeiro (casos de Gordon com ponta de outlier e DCF com crescimento informado).
-- **Procedência na tela**: `ceiling_class` tem `computed_at` e `price_date`, mas a data de coleta vem de `ceiling_method`/`ceiling_result`;
-  a consulta deve juntar as três.
-- **Viés de sobrevivência**: o texto vem do banco; se `warnings` e `universe` vierem vazios, a tela deve mostrar um aviso padrão
-  e não ocultar a faixa (teste da etapa 5.8).
+- Previews por PR não fazem login (URI do Google por domínio).
+- No celular, os parâmetros do simulador ficam acima do resultado; não há como salvar ou compartilhar uma simulação.
+- O gráfico de preço é semanal e sem ajuste; a dica ao passar o mouse é a nativa do navegador (sem cursor com linha vertical).
+- A paridade compara valores a 1e-9 relativo (não distingue 28 de 15 dígitos de precisão) e só cobre o que está em `ceiling_method.inputs`.
+- `npm audit`: 0 vulnerabilidades nas dependências de produção; restam avisos `braces`/`micromatch` só no ferramental do ESLint (dev).
+- Auth.js v5 ainda é beta (`next-auth@5.0.0-beta.32`, versão fixa).
+- O ticker mostrado no filtro é o do FCA e pode incluir papel antigo.
+
+## Para a próxima fase
+
+A fase 6 (carteira) vai precisar de **escrita** pela tela (lançamentos e upload do extrato): isso exige decidir a credencial de escrita
+do banco na Vercel (papel próprio com `INSERT/UPDATE` só nas tabelas da carteira) e abre exceção controlada à regra de só ler. A
+revisão de outliers e o disparo do `compute` pela tela podem entrar na mesma decisão.
+
+---
+
+# Notas por etapa (registro)
 
 ## Notas da etapa 5.0
 

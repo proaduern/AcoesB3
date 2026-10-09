@@ -206,6 +206,13 @@ Decididas pelo usuário (roteiro em `docs/fase5.md`):
 - **Login**: Auth.js com Google e `ALLOWED_EMAILS`, conferida no login e em todo acesso ao banco no servidor; segredo novo `AUTH_SECRET`.
 - **Repositório e deploy**: `web/` na raiz, projeto da Vercel com Root Directory `web`, produção pela branch padrão e preview por PR.
 
+Adotadas por padrão na implementação (corrigir se discordar):
+- **Somente leitura garantida pelo banco**: toda consulta da tela roda em transação `READ ONLY`; um papel do Neon só com `SELECT` continua recomendado como segunda camada.
+- **Ficha, gráfico de preço**: fechamento semanal do COTAHIST **sem ajuste por desdobramentos** (o pipeline não grava série ajustada); a linha do teto, que está na base de ações de hoje, só é desenhada depois do último evento societário do período.
+- **Lista e filtro**: o preço atual é o último fechamento do COTAHIST; a ficha existe só para empresas da lista acompanhada.
+- **Backtest**: a execução mostrada por padrão é a validação (ou o cenário congelado); o texto da faixa de viés vem da execução, com um texto padrão se faltar.
+- **Previews por PR** não fazem login (a URI de redirecionamento do Google vale por domínio).
+
 ## 10. Regras de qualidade de dados
 
 - Todo indicador exibe fonte, data-base e data de coleta.
