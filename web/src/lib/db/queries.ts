@@ -5,6 +5,8 @@ import { getPool } from "./pool";
 import * as company from "./company";
 import type { CeilingTab, CompanyHeader, FilterTab, OriginTab, Period, PriceTab } from "@/lib/company";
 import type { SimulatorData } from "@/lib/ceiling/view";
+import type { BacktestOverview, RunDetail } from "@/lib/backtest";
+import { loadBacktestOverview, loadRunDetail } from "./backtest";
 import { loadPending, loadScreen, type Pending, type ScreenPage } from "./screen";
 import { loadWatchlist } from "./watchlist";
 import type { ScreenFilters } from "@/lib/screen";
@@ -66,4 +68,14 @@ export async function getOriginTab(cvm: number, tickers: string[]): Promise<Orig
 export async function getSimulatorData(cvm: number): Promise<SimulatorData | null> {
   await requireUser();
   return company.loadSimulatorData(getPool(), cvm);
+}
+
+export async function getBacktestOverview(): Promise<BacktestOverview> {
+  await requireUser();
+  return loadBacktestOverview(getPool());
+}
+
+export async function getRunDetail(runId: number, allTrades = false): Promise<RunDetail> {
+  await requireUser();
+  return loadRunDetail(getPool(), runId, allTrades);
 }
