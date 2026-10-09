@@ -63,7 +63,7 @@ function Table({ role, companies }: { role: Role; companies: WatchCompany[] }) {
                 <tr key={`${c.cvmCode}-${k?.ticker ?? "x"}`} className={k?.buy ? "buy" : undefined}>
                   <td>
                     <strong>{k?.ticker ?? UNAVAILABLE}</strong>
-                    <div className="sub">{i === 0 ? c.name : ""}</div>
+                    <div className="sub">{i === 0 ? <Link href={`/empresa/${c.cvmCode}`}>{c.name}</Link> : ""}</div>
                   </td>
                   <td>{c.segment}</td>
                   <td className="num">

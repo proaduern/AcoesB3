@@ -1,21 +1,16 @@
 import Link from "next/link";
+import { CriteriaTable } from "@/components/CriteriaTable";
 import { Provenance } from "@/components/Provenance";
 import { getScreen } from "@/lib/db/queries";
 import type { ScreenPage } from "@/lib/db/screen";
 import { formatDate, UNAVAILABLE } from "@/lib/format";
 import { ROLE_LABEL } from "@/lib/watchlist";
 import {
-  CRITERION_LABEL,
-  CRITERION_ORDER,
   STATUS_LABEL,
   STATUS_ORDER,
-  formatCriterionValue,
-  formatThreshold,
   parseScreenFilters,
   problemCriteria,
-  reasonText,
   screenHref,
-  type CriterionRow,
   type ScreenFilters,
   type ScreenRow,
 } from "@/lib/screen";
@@ -30,56 +25,12 @@ async function load(f: ScreenFilters): Promise<ScreenPage | null> {
   }
 }
 
-const CRITERION_STATUS: Record<CriterionRow["status"], string> = {
-  pass: "Passou",
-  fail: "Reprovou",
-  unavailable: "Indisponível",
-};
-
-function Criteria({ row }: { row: ScreenRow }) {
-  if (row.criteria.length === 0) {
-    return <p className="sub">Sem critérios avaliados neste status.</p>;
-  }
-  const rank = (n: string) => {
-    const i = (CRITERION_ORDER as readonly string[]).indexOf(n);
-    return i === -1 ? 99 : i;
-  };
-  const sorted = [...row.criteria].sort((a, b) => rank(a.criterion) - rank(b.criterion));
-  return (
-    <table className="inner">
-      <thead>
-        <tr>
-          <th>Critério</th>
-          <th className="num">Valor</th>
-          <th>Limite</th>
-          <th>Resultado</th>
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((c) => (
-          <tr key={c.criterion}>
-            <td>{CRITERION_LABEL[c.criterion] ?? c.criterion}</td>
-            <td className="num">{formatCriterionValue(c.criterion, c.value)}</td>
-            <td>{formatThreshold(c.threshold)}</td>
-            <td>
-              {CRITERION_STATUS[c.status]}
-              {c.status === "unavailable" && reasonText(c.reason) && (
-                <div className="sub">{reasonText(c.reason)}</div>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
 function Row({ row }: { row: ScreenRow }) {
   const { failed, unavailable } = problemCriteria(row.criteria);
   return (
     <tr>
       <td>
-        <strong>{row.name}</strong>
+        {row.role ? <Link href={`/empresa/${row.cvmCode}`}><strong>{row.name}</strong></Link> : <strong>{row.name}</strong>}
         <div className="sub">{row.tickers.length ? row.tickers.join(", ") : "sem ticker no FCA"}</div>
       </td>
       <td>{row.sector ?? UNAVAILABLE}</td>
@@ -95,7 +46,7 @@ function Row({ row }: { row: ScreenRow }) {
         {row.criteria.length > 0 && (
           <details>
             <summary>Critérios</summary>
-            <Criteria row={row} />
+            <CriteriaTable criteria={row.criteria} />
           </details>
         )}
       </td>

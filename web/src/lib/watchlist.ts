@@ -104,7 +104,7 @@ export function filterHref(f: Filters, patch: Partial<Filters>): string {
 }
 
 /** Situação em texto: nunca só cor. Sem teto, com poucos métodos ou compra pela regra. */
-export function situation(c: WatchCompany, k: ClassRow): string {
+export function situation(c: Pick<WatchCompany, "ceilingStatus">, k: ClassRow): string {
   if (c.ceilingStatus === null) return "Sem preço teto calculado";
   if (k.ceiling === null) return "Sem teto";
   if (c.ceilingStatus === "insufficient") return "Dados insuficientes";

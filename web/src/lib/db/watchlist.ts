@@ -4,9 +4,26 @@ import { readOnly } from "./readonly";
 
 type Db = Pick<Pool, "connect">;
 
-const iso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : null);
-const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
-const int = (v: unknown): number | null => (typeof v === "number" ? v : null);
+export const iso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : null);
+export const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+export const int = (v: unknown): number | null => (typeof v === "number" ? v : null);
+
+/** Linha de `ceiling_class` -> papel da tela (preço e teto como texto, sem perder casas). */
+export function toClassRow(k: Record<string, unknown>): ClassRow {
+  return {
+    ticker: k.ticker as string,
+    kind: k.kind as ClassRow["kind"],
+    price: k.price as string,
+    priceDate: k.price_date as string,
+    ceiling: str(k.ceiling),
+    ratio: str(k.ratio),
+    band: (k.band as Band | null) ?? null,
+    votes: int(k.votes),
+    kRequired: int(k.k_required),
+    buy: k.buy === true,
+    reason: str(k.reason),
+  };
+}
 
 /**
  * Lista acompanhada com o último preço teto. Parte da `watchlist` (não do teto): empresa sem teto
@@ -39,19 +56,7 @@ export async function loadWatchlist(db: Db): Promise<WatchlistData> {
     );
     const byCvm = new Map<number, ClassRow[]>();
     for (const k of classes.rows) {
-      const row: ClassRow = {
-        ticker: k.ticker,
-        kind: k.kind,
-        price: k.price,
-        priceDate: k.price_date,
-        ceiling: str(k.ceiling),
-        ratio: str(k.ratio),
-        band: (k.band as Band | null) ?? null,
-        votes: int(k.votes),
-        kRequired: int(k.k_required),
-        buy: k.buy === true,
-        reason: str(k.reason),
-      };
+      const row = toClassRow(k);
       byCvm.set(k.cvm_code, [...(byCvm.get(k.cvm_code) ?? []), row]);
     }
 
