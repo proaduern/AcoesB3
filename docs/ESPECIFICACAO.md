@@ -200,11 +200,18 @@ Adotadas por padrão (corrigir se discordar; todas configuráveis):
 Decididas pelo usuário (roteiro em `docs/fase5.md`):
 - **Telas**: lista acompanhada, filtro da B3 inteira, backtest e ficha da empresa (com o simulador numa aba), menu fixo no topo.
 - **Ficha**: os 5 métodos do preço teto, critérios do filtro com histórico anual, gráfico de preço com a linha do teto, eventos societários e dados de origem.
-- **Simulador**: recalcula parâmetros (`ceiling.*`) e preço a partir dos insumos anuais já gravados em `ceiling_method.inputs`; não troca insumos à mão. Implementação única em TypeScript com `decimal.js`, teste de paridade contra `ceiling.py` e fixture regerado no CI.
-- **Aviso de viés de sobrevivência**: faixa fixa, sem botão de fechar, no topo da tela do backtest, mais selo "universo de hoje" ao lado de cada retorno e do gráfico; o texto vem de `backtest_run.warnings` / `universe.survivorship_warning`.
+- **Simulador**: recalcula parâmetros (`ceiling.*`) e preço a partir dos insumos anuais já gravados em `ceiling_method.inputs`; não troca insumos à mão. Implementação única em TypeScript com `decimal.js`, teste de paridade contra `ceiling.py` e fixture versionado em `web/tests/parity/cases.json`, gerado por `acoesb3 ceilings parity-export` e conferido pelo CI. Só altera o que age sobre os insumos gravados (taxas, multiplicador, k, limites de g, parâmetros do DCF, crescimento informado do DCF, K, faixas e preço); janelas de exercícios, alíquotas e mínimos de anos exigem os dados brutos e ficam no pipeline. Sem os insumos para refazer um método, mostra o valor gravado, marcado como tal. O DCF grava o divisor por ação (`shares`, `shares_factor`) em `inputs`.
+- **Aviso de viés de sobrevivência**: faixa fixa, sem botão de fechar, no topo da tela do backtest, mais selo "universo de hoje" ao lado de cada retorno e do gráfico; o texto vem de `backtest_run.warnings` / `universe.survivorship_warning`. Em telas largas a faixa acompanha a rolagem; se a execução não trouxer o texto, a tela usa um texto padrão (a faixa nunca some). A validação aparece marcada como medida uma única vez, com o critério de morte e seus limites, e com a nota de período curto quando passa de menos de 3,5 anos.
 - **Somente leitura**: revisão de outliers/eventos e mudança de configuração continuam por comando e Actions (a frase "revisão por comando até a tela existir" da seção 4.1 vale até uma fase própria de escrita).
 - **Login**: Auth.js com Google e `ALLOWED_EMAILS`, conferida no login e em todo acesso ao banco no servidor; segredo novo `AUTH_SECRET`.
 - **Repositório e deploy**: `web/` na raiz, projeto da Vercel com Root Directory `web`, produção pela branch padrão e preview por PR.
+
+Adotadas por padrão na implementação (corrigir se discordar):
+- **Somente leitura garantida pelo banco**: toda consulta da tela roda em transação `READ ONLY`; um papel do Neon só com `SELECT` continua recomendado como segunda camada.
+- **Ficha, gráfico de preço**: fechamento semanal do COTAHIST **sem ajuste por desdobramentos** (o pipeline não grava série ajustada); a linha do teto, que está na base de ações de hoje, só é desenhada depois do último evento societário do período.
+- **Lista e filtro**: o preço atual é o último fechamento do COTAHIST; a ficha existe só para empresas da lista acompanhada.
+- **Backtest**: a execução mostrada por padrão é a validação (ou o cenário congelado); o texto da faixa de viés vem da execução, com um texto padrão se faltar.
+- **Previews por PR** não fazem login (a URI de redirecionamento do Google vale por domínio).
 
 ## 10. Regras de qualidade de dados
 
